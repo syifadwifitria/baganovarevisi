@@ -1,0 +1,3647 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>BAGANOVA 3D — Simulasi Laut & Otomatisasi Bagan Tancap</title>
+
+  <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin />
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <!-- Kick off live ocean current fetch IMMEDIATELY (all=1 caches all 4 stations in 1 call) -->
+  <script>
+    (function () {
+      try {
+        var cachedRaw = sessionStorage.getItem('baganova_marine_karangantu');
+        if (cachedRaw) {
+          var parsed = JSON.parse(cachedRaw);
+          if (parsed && parsed.data && (Date.now() - parsed.savedAt) < 300000) {
+            window._prefetchedMarine = parsed.data;
+          }
+        }
+      } catch (e) {}
+
+      var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var tId = ctrl ? setTimeout(function () { ctrl.abort(); }, 4500) : null;
+      window._earlyMarinePromise = fetch('/api/marine-conditions?region=karangantu&all=1', ctrl ? { signal: ctrl.signal } : {})
+        .then(function (r) {
+          if (tId) clearTimeout(tId);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          if (data && data.stations) {
+            Object.keys(data.stations).forEach(function (k) {
+              try {
+                sessionStorage.setItem('baganova_marine_' + k, JSON.stringify({ savedAt: Date.now(), data: data.stations[k] }));
+              } catch (e) {}
+            });
+          } else if (data) {
+            try {
+              sessionStorage.setItem('baganova_marine_karangantu', JSON.stringify({ savedAt: Date.now(), data: data }));
+            } catch (e) {}
+          }
+          window._prefetchedMarine = data;
+          return data;
+        })
+        .catch(function () {
+          if (tId) clearTimeout(tId);
+          return null;
+        });
+    })();
+  </script>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts & Font Awesome (non-render-blocking) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" media="print" onload="this.media='all'" />
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  </noscript>
+
+  <!-- Three.js & OrbitControls (r128) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <style>
+    :root {
+      --bg-ocean: #041022;
+      --bg-panel: rgba(6, 20, 40, 0.84);
+      --border-cyan: rgba(0, 229, 208, 0.35);
+      --accent-cyan: #00e5d0;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg-ocean);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #f8fafc;
+      user-select: none;
+    }
+
+    h1, h2, h3, .brand-font {
+      font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+    }
+
+    .mono-font {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Fullscreen 3D Canvas */
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Glassmorphic Maritime HUD */
+    .glass-hud {
+      background: var(--bg-panel);
+      backdrop-filter: blur(18px) saturate(180%);
+      -webkit-backdrop-filter: blur(18px) saturate(180%);
+      border: 1px solid var(--border-cyan);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), inset 0 0 20px rgba(0, 229, 208, 0.06);
+    }
+
+    .text-cyan-neon {
+      color: #00e5d0;
+      text-shadow: 0 0 14px rgba(0, 229, 208, 0.55);
+    }
+
+    /* Custom Scrollbar */
+    .hud-scroll::-webkit-scrollbar {
+      width: 5px;
+    }
+    .hud-scroll::-webkit-scrollbar-track {
+      background: rgba(5, 13, 26, 0.4);
+      border-radius: 8px;
+    }
+    .hud-scroll::-webkit-scrollbar-thumb {
+      background: rgba(0, 229, 208, 0.45);
+      border-radius: 8px;
+    }
+
+    /* 3D Floating Callout Labels */
+    .label-3d-pin {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      z-index: 15;
+      transition: opacity 0.2s ease;
+    }
+
+    .label-3d-badge {
+      background: rgba(5, 16, 34, 0.9);
+      border: 1.5px solid #00e5d0;
+      color: #ffffff;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.65), 0 0 10px rgba(0, 229, 208, 0.35);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .label-3d-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #00e5d0;
+      display: inline-block;
+    }
+
+    .label-3d-stem {
+      width: 1.5px;
+      height: 11px;
+      background: linear-gradient(to bottom, #00e5d0, rgba(0, 229, 208, 0.1));
+      margin: 0 auto;
+    }
+
+    /* D-Pad Camera Buttons */
+    .dpad-btn {
+      background: rgba(10, 37, 64, 0.92);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      color: #e0f2fe;
+      border-radius: 11px;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .dpad-btn:hover {
+      background: rgba(2, 132, 199, 0.5);
+      border-color: #00e5d0;
+      color: #00e5d0;
+      transform: scale(1.05);
+    }
+    .dpad-btn:active {
+      background: #00e5d0;
+      color: #07162c;
+      transform: scale(0.95);
+    }
+
+    .status-dot-static {
+      opacity: 0.95;
+      box-shadow: 0 0 8px rgba(52, 211, 153, 0.55);
+    }
+
+    .sim-btn {
+      transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .sim-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+    .sim-btn:active:not(:disabled) {
+      transform: translateY(1px) scale(0.98);
+    }
+    .sim-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    input[type="range"] {
+      accent-color: #00e5d0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== 3D VIEWPORT CANVAS ==================== -->
+  <div id="canvas-container" aria-label="Simulasi 3D Laut & Prototipe BAGANOVA"></div>
+
+  <!-- ==================== FLOATING 3D LABELS LAYER ==================== -->
+  <div id="labels-layer" class="fixed inset-0 pointer-events-none z-10 overflow-hidden"></div>
+
+  <!-- ==================== TOP HEADER BAR ==================== -->
+  <header class="fixed top-3 left-3 right-3 z-30 glass-hud rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 flex-wrap">
+    <!-- Brand -->
+    <div class="flex items-center gap-2.5">
+      <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-sky-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-base sm:text-lg shadow-lg shadow-teal-500/30 shrink-0">
+        <i class="fas fa-anchor"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="brand-font font-black text-sm sm:text-base md:text-lg tracking-wider bg-gradient-to-r from-white via-cyan-100 to-teal-300 bg-clip-text text-transparent">
+            BAGANOVA 3D MARINE
+          </span>
+          <span class="hidden md:inline-block text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-teal-400/15 text-teal-300 border border-teal-400/40">
+            Simulasi Perairan & Tangkap Ikan
+          </span>
+        </div>
+        <p id="simHeaderSubtitle" class="text-[10.5px] sm:text-[11px] text-slate-300 leading-tight">
+          Prototipe Miniatur: Rangka Kayu + Atap Kardus + Load Cell 5 kg + Motor DC
+        </p>
+      </div>
+    </div>
+
+    <!-- Right Environment & UI Controls -->
+    <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+      <!-- Day / Night Bagan Mode Toggle -->
+      <button id="btnToggleDayNight" type="button"
+        class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-200 text-xs font-bold flex items-center gap-1.5 transition"
+        title="Ganti suasana antara Mode Malam (Lampu Pemikat Ikan menyala) dan Mode Siang Cerah">
+        <i id="dayNightIcon" class="fas fa-moon text-amber-300"></i>
+        <span id="dayNightText">Mode Malam (Lampu Aktif)</span>
+      </button>
+
+      <!-- Scale Mode Toggle (Miniatur vs Laut Nyata) -->
+      <button id="btnToggleScaleMode" type="button"
+        class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-sky-950/90 hover:bg-sky-900 border border-sky-400/50 text-xs font-bold text-sky-200 transition"
+        title="Ganti model 3D & kalibrasi beban antara skala miniatur uji dan skala bagan laut nyata">
+        <i class="fas fa-balance-scale text-teal-300"></i>
+        <span id="scaleModeText">Skala: Miniatur (2.0 kg)</span>
+      </button>
+
+      <!-- Toggle 3D Component Labels -->
+      <button id="btnToggleLabels" type="button"
+        class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-teal-400/20 hover:bg-teal-400/30 border border-teal-400/50 text-teal-200 text-xs font-bold flex items-center gap-1.5 transition"
+        title="Tampilkan atau sembunyikan label komponen 3D">
+        <i class="fas fa-tags"></i>
+        <span class="hidden sm:inline">Label 3D</span>
+      </button>
+
+      <!-- Toggle HUD Panels -->
+      <button id="btnToggleHud" type="button"
+        class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition"
+        title="Sembunyikan/Tampilkan Panel Telemetri">
+        <i id="hudEyeIcon" class="fas fa-eye-slash"></i>
+        <span class="hidden sm:inline" id="hudToggleText">Panel</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== TOAST NOTIFICATION ==================== -->
+  <div id="toastBanner" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-2">
+    <div id="toastInner" class="glass-hud px-4 py-2 rounded-full flex items-center gap-2 text-xs sm:text-sm font-semibold text-white border-teal-400 shadow-2xl">
+      <i id="toastIcon" class="fas fa-info-circle text-teal-300"></i>
+      <span id="toastMessage">Simulasi Laut BAGANOVA siap dijalankan.</span>
+    </div>
+  </div>
+
+  <!-- ==================== LEFT HUD: TELEMETRY, WAVE & CATCH CONTROLS ==================== -->
+  <aside id="leftHudPanel" class="fixed top-20 left-3 z-20 w-[calc(100vw-24px)] sm:w-80 md:w-88 max-h-[calc(100vh-175px)] overflow-y-auto hud-scroll glass-hud rounded-2xl p-3.5 transition-all duration-300">
+    
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-cyan-500/20 pb-2 mb-2.5">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 status-dot-static"></span>
+        <h2 class="text-xs font-extrabold uppercase tracking-wider text-sky-200">Telemetri & Sensor Beban</h2>
+      </div>
+      <span class="mono-font text-[10px] font-bold px-2 py-0.5 rounded bg-teal-400/15 text-teal-300 border border-teal-400/30">
+        ESP32 • HX711
+      </span>
+    </div>
+
+    <!-- Primary Readout: Weight & Fish Caught -->
+    <div class="rounded-xl bg-gradient-to-br from-slate-900/95 to-sky-950/90 border border-teal-400/50 p-3 mb-2.5">
+      <div class="grid grid-cols-2 gap-2 items-center">
+        <div>
+          <span class="text-[9.5px] font-bold uppercase tracking-wider text-teal-300 block">Beban Load Cell</span>
+          <div class="flex items-baseline gap-1.5 mt-0.5">
+            <span id="loadKgDisplay" class="mono-font text-2xl sm:text-3xl font-black text-white text-cyan-neon">0.35 kg</span>
+          </div>
+          <span id="loadNewtonDisplay" class="mono-font text-[10.5px] text-sky-300 font-semibold">3.4 N (Tara: 0.35 kg)</span>
+        </div>
+
+        <div class="bg-slate-950/70 rounded-xl p-2 border border-sky-400/25 text-center">
+          <span class="text-[9.5px] font-bold uppercase tracking-wider text-amber-300 block">
+            <i class="fas fa-fish mr-1"></i>Berat Tangkapan
+          </span>
+          <span id="caughtFishDisplay" class="mono-font text-2xl font-black text-amber-300 block leading-tight mt-0.5">0.00 kg</span>
+          <span id="totalHarvestedText" class="text-[10px] text-slate-400">Total Panen: 0.00 kg</span>
+        </div>
+      </div>
+
+      <!-- Target Threshold Slider -->
+      <div class="mt-2.5 pt-2 border-t border-slate-800">
+        <div class="flex justify-between items-center text-[10.5px] mb-1">
+          <span class="text-slate-300 font-semibold">Batas Target Angkat:</span>
+          <span id="targetThresholdDisplay" class="mono-font font-extrabold text-teal-300">2.00 kg</span>
+        </div>
+        <input id="sliderTargetThreshold" type="range" min="1.0" max="4.5" step="0.25" value="2.0" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
+        
+        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700 mt-1.5">
+          <div id="loadProgressBar" class="h-full bg-gradient-to-r from-sky-400 to-teal-300 transition-all duration-300" style="width: 18%;"></div>
+        </div>
+      </div>
+
+      <!-- Mini Oscilloscope (Raw Wave Signal vs MA-15 Filtered) -->
+      <div class="mt-2.5 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between text-[10px] mb-1">
+          <span class="text-slate-400"><i class="fas fa-wave-square text-teal-300 mr-1"></i>Sinyal Ombak vs Filter ESP32</span>
+          <span id="stabilityStatusBadge" class="text-emerald-400 font-bold"><i class="fas fa-check-circle"></i> Stabil</span>
+        </div>
+        <canvas id="miniWaveCanvas" width="280" height="48" class="w-full h-11 rounded-lg bg-slate-950/90 border border-cyan-500/20"></canvas>
+      </div>
+    </div>
+
+    <!-- Real Ocean Current & Wave Telemetry (Open-Meteo Marine / Copernicus) -->
+    <div class="rounded-xl bg-slate-900/85 border border-cyan-500/35 p-2.5 mb-2.5">
+      <div class="flex items-center justify-between mb-1.5 gap-1.5">
+        <span class="text-[10px] font-extrabold uppercase tracking-wider text-sky-200 flex items-center gap-1">
+          <i class="fas fa-satellite-dish text-teal-300"></i>
+          <span>Arus &amp; Ombak (Live)</span>
+        </span>
+        <span id="waveLabelText" class="px-1.5 py-0.5 rounded bg-teal-400/20 border border-teal-400/50 text-[9.5px] font-bold text-teal-200 truncate">Menghubungkan...</span>
+      </div>
+
+      <!-- Region Select & Refresh Row -->
+      <div class="flex items-center gap-1.5 mb-2">
+        <select id="selectMarineRegion"
+          class="flex-1 min-w-0 px-2 py-1 rounded-lg bg-slate-950/90 border border-slate-700 text-[10.5px] font-semibold text-sky-100 focus:outline-none focus:border-teal-400">
+          <option value="karangantu">Teluk Banten · Karangantu, Serang</option>
+          <option value="anyer">Selat Sunda · Anyer, Banten</option>
+          <option value="muara_angke">Teluk Jakarta · Muara Angke</option>
+          <option value="indramayu">Laut Jawa · Eretan, Indramayu</option>
+        </select>
+        <button id="btnRefreshMarine" type="button"
+          class="py-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-600 text-[10.5px] transition"
+          title="Muat ulang data arus & gelombang laut terkini">
+          <i id="refreshMarineIcon" class="fas fa-sync-alt"></i>
+        </button>
+      </div>
+
+      <!-- 2x2 Real Telemetry Readout Grid -->
+      <div id="marineReadoutStrip" class="grid grid-cols-2 gap-1.5 mb-1.5 text-left">
+        <div class="bg-slate-950/85 border border-cyan-500/20 rounded-lg px-2 py-1.5">
+          <span class="text-[8.5px] uppercase text-slate-400 block">Kecepatan Arus</span>
+          <strong id="marineCurrentVal" class="mono-font text-[10.5px] text-teal-300 block">Memuat...</strong>
+        </div>
+        <div class="bg-slate-950/85 border border-cyan-500/20 rounded-lg px-2 py-1.5">
+          <span class="text-[8.5px] uppercase text-slate-400 block">Arah Arus</span>
+          <strong id="marineDirVal" class="mono-font text-[10.5px] text-amber-300 block">Memuat...</strong>
+        </div>
+        <div class="bg-slate-950/85 border border-cyan-500/20 rounded-lg px-2 py-1.5">
+          <span class="text-[8.5px] uppercase text-slate-400 block">Tinggi &amp; Periode Ombak</span>
+          <strong id="marineWaveVal" class="mono-font text-[10.5px] text-sky-300 block">Memuat...</strong>
+        </div>
+        <div class="bg-slate-950/85 border border-cyan-500/20 rounded-lg px-2 py-1.5">
+          <span class="text-[8.5px] uppercase text-slate-400 block">Suhu Laut (SST)</span>
+          <strong id="marineTempVal" class="mono-font text-[10.5px] text-emerald-300 block">Memuat...</strong>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/80 gap-1">
+        <span class="truncate"><i class="fas fa-database text-sky-400 mr-1"></i>Open-Meteo Marine (Copernicus/ECMWF)</span>
+        <span id="marineObservedVal" class="mono-font text-slate-300 shrink-0">--:--</span>
+      </div>
+    </div>
+
+    <!-- Hardware Status Strip -->
+    <div class="grid grid-cols-3 gap-1.5 mb-2.5 text-center">
+      <div class="rounded-xl bg-slate-900/85 border border-slate-700/80 p-1.5">
+        <span class="text-[9px] uppercase text-slate-400 block">Motor DC</span>
+        <strong id="statusMotorText" class="text-[10.5px] font-bold text-sky-300 block">Standby</strong>
+      </div>
+      <div class="rounded-xl bg-slate-900/85 border border-slate-700/80 p-1.5">
+        <span class="text-[9px] uppercase text-slate-400 block">Limit Atas</span>
+        <strong id="statusLimitTopText" class="text-[10.5px] font-bold text-slate-300 block">Terbuka</strong>
+      </div>
+      <div class="rounded-xl bg-slate-900/85 border border-slate-700/80 p-1.5">
+        <span class="text-[9px] uppercase text-slate-400 block">Limit Bawah</span>
+        <strong id="statusLimitBotText" class="text-[10.5px] font-bold text-emerald-400 block">Aktif</strong>
+      </div>
+    </div>
+
+    <!-- Interactive Fish & Hoist Action Buttons -->
+    <div class="space-y-1.5">
+      <div class="grid grid-cols-2 gap-1.5">
+        <button id="btnCallFish" type="button"
+          class="sim-btn py-2 px-2.5 rounded-xl bg-white hover:bg-sky-50 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md">
+          <i class="fas fa-fish text-sky-600"></i>
+          <span>+ Panggil Ikan</span>
+        </button>
+        <button id="btnManualHoist" type="button"
+          class="sim-btn py-2 px-2.5 rounded-xl bg-gradient-to-r from-teal-400 to-cyan-300 hover:brightness-105 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-teal-500/25">
+          <i class="fas fa-arrow-up"></i>
+          <span>Angkat Manual</span>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-1.5">
+        <button id="btnHarvestFish" type="button"
+          class="sim-btn py-2 px-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md">
+          <i class="fas fa-box-open"></i>
+          <span>Panen Ikan</span>
+        </button>
+        <button id="btnManualLower" type="button"
+          class="sim-btn py-2 px-2.5 rounded-xl bg-sky-600/35 hover:bg-sky-600/55 border border-sky-400/50 text-sky-100 font-bold text-xs flex items-center justify-center gap-1.5">
+          <i class="fas fa-arrow-down"></i>
+          <span>Turunkan Jaring</span>
+        </button>
+      </div>
+
+      <!-- Emergency Stop -->
+      <button id="btnEStop" type="button"
+        class="sim-btn w-full py-2 px-3 rounded-xl bg-red-600 hover:bg-red-500 border border-red-300/60 text-white font-black text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-600/30">
+        <i class="fas fa-hand"></i>
+        <span id="estopBtnText">EMERGENCY STOP (E-STOP)</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ==================== BOTTOM BAR: CAMERA PRESETS & 360° D-PAD ==================== -->
+  <footer id="bottomCameraBar" class="fixed bottom-3 left-3 right-3 z-20 flex flex-col md:flex-row items-center justify-between gap-2 pointer-events-none">
+    
+    <!-- Camera View Presets -->
+    <div class="glass-hud rounded-2xl p-1.5 flex items-center gap-1.5 overflow-x-auto max-w-full pointer-events-auto">
+      <span class="text-[10px] font-extrabold uppercase tracking-wider text-teal-300 px-2 hidden sm:inline">
+        <i class="fas fa-video mr-1"></i>Kamera:
+      </span>
+      <button type="button" data-view="full" class="cam-preset-btn px-2.5 py-1.5 rounded-xl bg-teal-400 text-slate-950 font-extrabold text-xs whitespace-nowrap transition">
+        Full Laut & Bagan
+      </button>
+      <button type="button" data-view="underwater" class="cam-preset-btn px-2.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 font-semibold text-xs whitespace-nowrap border border-slate-700 transition">
+        Bawah Air (Ikan & Jaring)
+      </button>
+      <button type="button" data-view="deck" class="cam-preset-btn px-2.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 font-semibold text-xs whitespace-nowrap border border-slate-700 transition">
+        Dek Elektronik (Foto)
+      </button>
+      <button type="button" data-view="roof" class="cam-preset-btn px-2.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 font-semibold text-xs whitespace-nowrap border border-slate-700 transition">
+        Atap & Katrol Atas
+      </button>
+      <button type="button" data-view="side" class="cam-preset-btn px-2.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 font-semibold text-xs whitespace-nowrap border border-slate-700 transition">
+        Tampak Samping
+      </button>
+    </div>
+
+    <!-- 360° Interactive D-Pad Controller -->
+    <div class="glass-hud rounded-2xl p-2 flex items-center gap-2.5 pointer-events-auto">
+      <div class="grid grid-cols-3 gap-1 w-28 h-24">
+        <div></div>
+        <button id="camUpBtn" type="button" class="dpad-btn" title="Putar Kamera Atas (Panah Atas / W)" aria-label="Kamera Atas">
+          <i class="fas fa-chevron-up text-sm"></i>
+        </button>
+        <div></div>
+
+        <button id="camLeftBtn" type="button" class="dpad-btn" title="Putar Kamera Kiri (Panah Kiri / A)" aria-label="Kamera Kiri">
+          <i class="fas fa-chevron-left text-sm"></i>
+        </button>
+        <button id="camResetBtn" type="button" class="dpad-btn text-[10px] font-extrabold" title="Reset Kamera (R)" aria-label="Reset Kamera">
+          <i class="fas fa-crosshairs text-teal-300"></i>
+        </button>
+        <button id="camRightBtn" type="button" class="dpad-btn" title="Putar Kamera Kanan (Panah Kanan / D)" aria-label="Kamera Kanan">
+          <i class="fas fa-chevron-right text-sm"></i>
+        </button>
+
+        <div></div>
+        <button id="camDownBtn" type="button" class="dpad-btn" title="Putar Kamera Bawah (Panah Bawah / S)" aria-label="Kamera Bawah">
+          <i class="fas fa-chevron-down text-sm"></i>
+        </button>
+        <div></div>
+      </div>
+
+      <div class="flex flex-col gap-1.5">
+        <div class="flex gap-1.5">
+          <button id="camZoomInBtn" type="button" class="dpad-btn w-9 h-9" title="Perbesar (Zoom In +)" aria-label="Zoom In">
+            <i class="fas fa-plus text-xs"></i>
+          </button>
+          <button id="camZoomOutBtn" type="button" class="dpad-btn w-9 h-9" title="Perkecil (Zoom Out -)" aria-label="Zoom Out">
+            <i class="fas fa-minus text-xs"></i>
+          </button>
+        </div>
+        <button id="camAutoRotateBtn" type="button"
+          class="px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-600 text-[10px] font-bold text-slate-300 flex items-center justify-center gap-1 transition"
+          title="Putar Otomatis 360 Derajat">
+          <i class="fas fa-sync-alt"></i>
+          <span>360° Auto</span>
+        </button>
+      </div>
+    </div>
+
+  </footer>
+
+  <!-- ==================== 3D SIMULATION ENGINE (THREE.JS) ==================== -->
+  <script>
+    /**
+     * BAGANOVA 3D Marine & Automated Lift-Net Simulation
+     * Vertical Coordinate System:
+     * y = -4.2 : Sandy Seabed & Corals
+     * y =  0.0 : Undulating Ocean Surface (Semi-transparent)
+     * y = +2.4 : Pine Wood Slatted Deck Platform (with rectangular center opening)
+     * y = +4.6 : Top Frame & Overhead Pulley (Katrol Atas)
+     * y = +5.4 : Gable Roof Peak (Corrugated Kraft Cardboard)
+     */
+
+    // =========================================================================
+    // 1. GLOBAL STATE
+    // =========================================================================
+    const SIM_STATE = {
+      isNightMode: true,
+      attractantLampOn: true,
+      waveMode: 'live',          // 'live' (Open-Meteo Marine) | 'manual'
+      waveIntensity: 'moderate', // 'calm' | 'moderate' | 'rough'
+      marineRegion: 'karangantu',
+      liveMarine: null,          // populated from /api/marine-conditions
+      scaleMode: 'miniature',    // 'miniature' (2.00 kg) | 'fullscale' (85.0 kg)
+
+      tareKg: 0.35,
+      targetKg: 2.00,
+      currentFilteredKg: 0.35,
+      currentRawKg: 0.35,
+      filteredDisplayKg: 0.35,
+      rawSampleBuffer: new Array(15).fill(0.35),
+      sampleAccumSec: 0,
+      weightPerFish: 0.22,
+
+      capturedFishCount: 0,
+      totalHarvestedKg: 0,
+      fishAttractBoostTimer: 0,
+
+      // Hoist kinematics: 0.0 = submerged in sea (y = -1.45), 1.0 = hoisted right below deck (y = +2.02)
+      hoistProgress: 0.0,
+      motorState: 'standby', // 'standby' | 'verifying' | 'raising' | 'lowering' | 'stopped_top' | 'estop'
+      limitSwitchTop: false,
+      limitSwitchBottom: true,
+
+      showLabels: true,
+      hudVisible: true,
+      autoRotate: false,
+
+      waveform: new Array(75).fill(0).map(() => ({ raw: 0.35, filtered: 0.35 }))
+    };
+
+    // Three.js Core Variables
+    let scene, camera, renderer, controls, isSoftwareGl = false;
+    const clock = new THREE.Clock();
+
+    // 3D Scene References
+    const parts = {
+      ambientLight: null,
+      sunLight: null,
+      rimLight: null,
+      skyMat: null,
+      causticDisc: null,
+      buoys: [],
+      hangLanternLight: null,
+      hangLanternBulb: null,
+      beaconLedMesh: null,
+      miniLanternLight: null,
+      attractantLight: null,
+      attractantBulbMesh: null,
+      attractantConeMesh: null,
+
+      waterSurface: null,
+      waterInitialY: null,
+      bubbles: [],
+      seaweeds: [],
+
+      // Bagan Hardware Parts (Miniature & Full-Scale)
+      miniatureGroup: null,
+      fullScaleGroup: null,
+      motorShaft: null,
+      winchSpool: null,
+      fullMotorShaft: null,
+      fullWinchSpool: null,
+      fullPanelLedMesh: null,
+      sBeamInlineGroup: null,
+      espLedMesh: null,
+      driverLedMesh: null,
+      limitTopLed: null,
+      limitTopLever: null,
+      limitBotLed: null,
+
+      // Hoist Assembly & Ropes
+      hoistGroup: null,
+      ropePulleyToLoadCell: null,
+      ropeLoadCellToSpreader: null,
+      netMesh: null,
+
+      // Fish Schooling & Teri/Rebon Swarm
+      fishList: [],
+      teriSwarmGroup: null,
+      teriParticles: [],
+
+      // 3D Callout Anchors
+      anchors: [],
+      netLabelSpan: null
+    };
+
+    // Camera Smooth Tween
+    const cameraTween = {
+      active: false,
+      targetPos: new THREE.Vector3(7.4, 3.8, 8.2),
+      targetLookAt: new THREE.Vector3(0, 1.4, 0)
+    };
+
+    // Continuous D-Pad Hold State
+    const dpadHold = {
+      up: false, down: false, left: false, right: false, zoomIn: false, zoomOut: false
+    };
+
+    // =========================================================================
+    // 2. PROCEDURAL TEXTURES (WOOD, CORRUGATED CARDBOARD, SAND, NET MESH)
+    // =========================================================================
+    function createWoodTexture(baseHex = '#dfb582', grainHex = '#a97442') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = baseHex;
+      ctx.fillRect(0, 0, 256, 256);
+
+      for (let i = 0; i < 160; i++) {
+        ctx.fillStyle = i % 2 === 0 ? grainHex : 'rgba(255, 245, 225, 0.18)';
+        ctx.globalAlpha = 0.1 + Math.random() * 0.14;
+        const x = Math.random() * 256;
+        ctx.fillRect(x, 0, 1 + Math.random() * 3, 256);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createCorrugatedCardboardTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      // Kraft brown cardboard base
+      ctx.fillStyle = '#b58454';
+      ctx.fillRect(0, 0, 256, 256);
+
+      // Subtle paper fibers & fluting shadow ribs
+      for (let y = 0; y < 256; y += 6) {
+        ctx.fillStyle = y % 12 === 0 ? 'rgba(92, 58, 28, 0.18)' : 'rgba(235, 200, 160, 0.12)';
+        ctx.fillRect(0, y, 256, 3);
+      }
+      for (let i = 0; i < 400; i++) {
+        ctx.fillStyle = 'rgba(65, 40, 18, 0.12)';
+        ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 1);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function createBambooTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#849654';
+      ctx.fillRect(0, 0, 256, 256);
+
+      for (let x = 0; x < 256; x += 6) {
+        ctx.fillStyle = x % 12 === 0 ? 'rgba(65, 78, 35, 0.25)' : 'rgba(190, 205, 130, 0.16)';
+        ctx.fillRect(x, 0, 3, 256);
+      }
+      // Bamboo segment node rings
+      [42, 128, 214].forEach((y) => {
+        ctx.fillStyle = 'rgba(55, 62, 28, 0.72)';
+        ctx.fillRect(0, y - 3, 256, 6);
+        ctx.fillStyle = 'rgba(215, 225, 165, 0.35)';
+        ctx.fillRect(0, y + 3, 256, 2);
+      });
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(1, 3);
+      return tex;
+    }
+
+    function createCorrugatedZincTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(0, 0, 256, 256);
+
+      for (let x = 0; x < 256; x += 12) {
+        ctx.fillStyle = 'rgba(226, 232, 240, 0.38)';
+        ctx.fillRect(x, 0, 5, 256);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.36)';
+        ctx.fillRect(x + 6, 0, 5, 256);
+      }
+      // Subtle weathered sea-salt patina
+      for (let i = 0; i < 300; i++) {
+        ctx.fillStyle = 'rgba(120, 53, 15, 0.08)';
+        ctx.fillRect(Math.random() * 256, Math.random() * 256, 4, 2);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(3, 2);
+      return tex;
+    }
+
+    function createSandTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#1e3a52';
+      ctx.fillRect(0, 0, 256, 256);
+
+      // Sand ripples & mineral speckles
+      for (let y = 0; y < 256; y += 14) {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        for (let x = 0; x <= 256; x += 16) {
+          ctx.lineTo(x, y + Math.sin(x * 0.08) * 3);
+        }
+        ctx.stroke();
+      }
+      for (let i = 0; i < 900; i++) {
+        ctx.fillStyle = i % 2 === 0 ? 'rgba(226, 232, 240, 0.08)' : 'rgba(15, 23, 42, 0.18)';
+        ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(8, 8);
+      return tex;
+    }
+
+    function createNetMeshTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+
+      ctx.clearRect(0, 0, 128, 128);
+      ctx.strokeStyle = 'rgba(20, 35, 50, 0.95)';
+      ctx.lineWidth = 2.6;
+
+      const step = 14;
+      for (let i = -128; i < 256; i += step) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i + 128, 128);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(i + 128, 0);
+        ctx.lineTo(i, 128);
+        ctx.stroke();
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(6, 5);
+      return tex;
+    }
+
+    function createMaritimeEnvTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const grad = ctx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0.0, '#091b3a');
+      grad.addColorStop(0.38, '#134e7e');
+      grad.addColorStop(0.49, '#38bdf8');
+      grad.addColorStop(0.51, '#0c4a6e');
+      grad.addColorStop(0.72, '#062647');
+      grad.addColorStop(1.0, '#030d1d');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 256);
+
+      // Soft studio highlight bands for crisp specular reflections on metal/zinc/water
+      const sunGrad = ctx.createRadialGradient(360, 108, 6, 360, 108, 88);
+      sunGrad.addColorStop(0, 'rgba(224, 242, 254, 0.85)');
+      sunGrad.addColorStop(0.45, 'rgba(56, 189, 248, 0.32)');
+      sunGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.fillStyle = sunGrad;
+      ctx.fillRect(0, 0, 512, 256);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
+      else if ('sRGBEncoding' in THREE) tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+
+    function createSignboardTexture(titleText, subText) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+
+      const bgGrad = ctx.createLinearGradient(0, 0, 512, 128);
+      bgGrad.addColorStop(0, '#04142b');
+      bgGrad.addColorStop(1, '#082c52');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, 512, 128);
+
+      ctx.strokeStyle = '#00e5d0';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(5, 5, 502, 118);
+
+      ctx.fillStyle = '#00e5d0';
+      ctx.font = 'bold 42px Inter, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(titleText, 256, 62);
+
+      ctx.fillStyle = '#e0f2fe';
+      ctx.font = 'bold 20px Inter, Arial, sans-serif';
+      ctx.fillText(subText, 256, 98);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
+      else if ('sRGBEncoding' in THREE) tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+
+    function createOledPanelTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 160;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#031326';
+      ctx.fillRect(0, 0, 256, 160);
+      ctx.strokeStyle = '#00e5d0';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(4, 4, 248, 152);
+
+      ctx.fillStyle = '#00e5d0';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText('ESP32 ONLINE', 18, 36);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 17px monospace';
+      ctx.fillText('HX711: READY', 18, 64);
+
+      ctx.strokeStyle = '#2dd4bf';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let x = 18; x <= 238; x += 6) {
+        const y = 112 + Math.sin(x * 0.08) * 14 + Math.cos(x * 0.19) * 5;
+        if (x === 18) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      const tex = new THREE.CanvasTexture(canvas);
+      if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
+      else if ('sRGBEncoding' in THREE) tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+
+    function createSolarPanelTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0b2545';
+      ctx.fillRect(0, 0, 256, 256);
+
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      for (let x = 0; x <= 256; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, 256);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= 256; y += 32) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(256, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+      for (let gx = 4; gx < 256; gx += 32) {
+        for (let gy = 4; gy < 256; gy += 32) {
+          ctx.fillRect(gx, gy, 24, 24);
+        }
+      }
+      const tex = new THREE.CanvasTexture(canvas);
+      if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
+      else if ('sRGBEncoding' in THREE) tex.encoding = THREE.sRGBEncoding;
+      return tex;
+    }
+
+    // =========================================================================
+    // 3. INITIALIZE THREE.JS SCENE, LIGHTS & ORBIT CONTROLS
+    // =========================================================================
+    function initScene() {
+      const container = document.getElementById('canvas-container');
+
+      isSoftwareGl = (() => {
+        try {
+          const gl = document.createElement('canvas').getContext('webgl2') || document.createElement('canvas').getContext('webgl');
+          if (!gl) return true;
+          const ext = gl.getExtension('WEBGL_debug_renderer_info');
+          const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+          const gpu = String(gl.getParameter(param) || '');
+          gl.getExtension('WEBGL_lose_context')?.loseContext();
+          return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+        } catch (_e) {
+          return false;
+        }
+      })();
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color('#041022');
+      scene.fog = new THREE.FogExp2('#041022', 0.017);
+
+      camera = new THREE.PerspectiveCamera(44, container.clientWidth / container.clientHeight, 0.1, 180);
+      camera.position.set(7.6, 4.1, 8.6);
+
+      renderer = new THREE.WebGLRenderer({ antialias: !isSoftwareGl, powerPreference: 'high-performance' });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = !isSoftwareGl;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.18;
+      if ('SRGBColorSpace' in THREE) renderer.outputColorSpace = THREE.SRGBColorSpace;
+      else if ('sRGBEncoding' in THREE) renderer.outputEncoding = THREE.sRGBEncoding;
+      container.appendChild(renderer.domElement);
+
+      // Studio & Maritime Environment Reflections for PBR Materials
+      scene.environment = createMaritimeEnvTexture();
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 1.55, 0);
+      controls.enableDamping = !isSoftwareGl;
+      controls.dampingFactor = 0.06;
+      controls.rotateSpeed = 0.85;
+      controls.zoomSpeed = 0.95;
+      controls.panSpeed = 0.85;
+      controls.minDistance = 2.4;
+      controls.maxDistance = 22.0;
+      controls.maxPolarAngle = Math.PI * 0.92;
+
+      controls.addEventListener('start', () => {
+        cameraTween.active = false;
+      });
+
+      // Procedural Gradient Sky Dome (Coastal Horizon Atmosphere)
+      parts.skyMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        uniforms: {
+          uTopColor: { value: new THREE.Color('#020817') },
+          uMidColor: { value: new THREE.Color('#072247') },
+          uHorizonColor: { value: new THREE.Color('#0c4a6e') }
+        },
+        vertexShader: `
+          varying vec3 vWorldPos;
+          void main() {
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vWorldPos = wp.xyz;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uTopColor;
+          uniform vec3 uMidColor;
+          uniform vec3 uHorizonColor;
+          varying vec3 vWorldPos;
+          void main() {
+            float h = normalize(vWorldPos).y;
+            vec3 col = mix(uHorizonColor, uMidColor, smoothstep(-0.05, 0.35, h));
+            col = mix(col, uTopColor, smoothstep(0.28, 0.9, h));
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `
+      });
+      const skyDome = new THREE.Mesh(new THREE.SphereGeometry(75, 32, 20), parts.skyMat);
+      scene.add(skyDome);
+
+      // 3-Point Warm/Cool Maritime Lighting Rig
+      parts.ambientLight = new THREE.HemisphereLight('#7dd3fc', '#051428', 0.78);
+      scene.add(parts.ambientLight);
+
+      parts.sunLight = new THREE.DirectionalLight('#e0f2fe', 1.05);
+      parts.sunLight.position.set(8, 14, 9);
+      parts.sunLight.castShadow = !isSoftwareGl;
+      parts.sunLight.shadow.mapSize.width = 2048;
+      parts.sunLight.shadow.mapSize.height = 2048;
+      parts.sunLight.shadow.bias = -0.0004;
+      parts.sunLight.shadow.normalBias = 0.02;
+      parts.sunLight.shadow.camera.near = 1;
+      parts.sunLight.shadow.camera.far = 36;
+      const d = 8;
+      parts.sunLight.shadow.camera.left = -d;
+      parts.sunLight.shadow.camera.right = d;
+      parts.sunLight.shadow.camera.top = d;
+      parts.sunLight.shadow.camera.bottom = -d;
+      scene.add(parts.sunLight);
+
+      parts.rimLight = new THREE.DirectionalLight('#00e5d0', 0.42);
+      parts.rimLight.position.set(-8, 6, -9);
+      scene.add(parts.rimLight);
+    }
+
+    // =========================================================================
+    // 4. BUILD 3D MARINE ENVIRONMENT (WATER SURFACE, SEABED, CORALS, BUBBLES)
+    // =========================================================================
+    function buildMarineEnvironment() {
+      const seaGroup = new THREE.Group();
+      scene.add(seaGroup);
+
+      const seaSpan = 44;
+      const seabedY = -4.2;
+
+      // 1. Undulating Ocean Surface (y = 0)
+      const waterGeo = new THREE.PlaneGeometry(seaSpan, seaSpan, 64, 64);
+      waterGeo.rotateX(-Math.PI / 2);
+      const waterMat = new THREE.MeshPhysicalMaterial({
+        color: '#0284c7',
+        emissive: '#064e78',
+        emissiveIntensity: 0.24,
+        transparent: true,
+        opacity: 0.48,
+        roughness: 0.10,
+        metalness: 0.22,
+        clearcoat: 0.85,
+        clearcoatRoughness: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+      parts.waterSurface = new THREE.Mesh(waterGeo, waterMat);
+      parts.waterSurface.position.y = 0;
+      seaGroup.add(parts.waterSurface);
+
+      const posAttr = waterGeo.attributes.position;
+      parts.waterInitialY = new Float32Array(posAttr.count);
+      for (let i = 0; i < posAttr.count; i++) {
+        parts.waterInitialY[i] = posAttr.getY(i);
+      }
+
+      // Subtle Translucent Underwater Volume Tint Box
+      const subVolGeo = new THREE.BoxGeometry(seaSpan, Math.abs(seabedY), seaSpan);
+      const subVolMat = new THREE.MeshBasicMaterial({
+        color: '#033c6e',
+        transparent: true,
+        opacity: 0.14,
+        side: THREE.BackSide,
+        depthWrite: false
+      });
+      const subVol = new THREE.Mesh(subVolGeo, subVolMat);
+      subVol.position.y = seabedY / 2;
+      seaGroup.add(subVol);
+
+      // 2. Sandy Seabed (y = -4.2) + Caustic Light Halo
+      const sandTex = createSandTexture();
+      const seabedGeo = new THREE.PlaneGeometry(seaSpan, seaSpan, 36, 36);
+      seabedGeo.rotateX(-Math.PI / 2);
+      const sbPos = seabedGeo.attributes.position;
+      for (let i = 0; i < sbPos.count; i++) {
+        const sx = sbPos.getX(i);
+        const sz = sbPos.getZ(i);
+        sbPos.setY(i, Math.sin(sx * 0.4) * 0.12 + Math.cos(sz * 0.4) * 0.12);
+      }
+      seabedGeo.computeVertexNormals();
+
+      const seabedMat = new THREE.MeshStandardMaterial({
+        map: sandTex,
+        roughness: 0.9,
+        metalness: 0.05
+      });
+      const seabed = new THREE.Mesh(seabedGeo, seabedMat);
+      seabed.position.y = seabedY;
+      seabed.receiveShadow = true;
+      seaGroup.add(seabed);
+
+      // Luminous Underwater Caustic Pool on Seabed under Attractant Lamp
+      const causticCanvas = document.createElement('canvas');
+      causticCanvas.width = 256;
+      causticCanvas.height = 256;
+      const cCtx = causticCanvas.getContext('2d');
+      const cGrad = cCtx.createRadialGradient(128, 128, 10, 128, 128, 124);
+      cGrad.addColorStop(0, 'rgba(0, 229, 208, 0.52)');
+      cGrad.addColorStop(0.5, 'rgba(56, 189, 248, 0.22)');
+      cGrad.addColorStop(1, 'rgba(0, 229, 208, 0)');
+      cCtx.fillStyle = cGrad;
+      cCtx.fillRect(0, 0, 256, 256);
+      const causticTex = new THREE.CanvasTexture(causticCanvas);
+      parts.causticDisc = new THREE.Mesh(
+        new THREE.PlaneGeometry(7.2, 7.2),
+        new THREE.MeshBasicMaterial({ map: causticTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      parts.causticDisc.rotation.x = -Math.PI / 2;
+      parts.causticDisc.position.set(0, seabedY + 0.18, 0.55);
+      seaGroup.add(parts.causticDisc);
+
+      // 3. Coastal Rocks, Coral Reef Clusters & Swaying Seaweed on Seabed
+      const coralColors = ['#fb7185', '#f59e0b', '#2dd4bf', '#a78bfa', '#38bdf8'];
+      const rockMat = new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.9 });
+
+      for (let i = 0; i < 28; i++) {
+        const angle = (i / 28) * Math.PI * 2 + Math.random() * 0.3;
+        const dist = 2.6 + Math.random() * 8.5;
+        const rx = Math.cos(angle) * dist;
+        const rz = Math.sin(angle) * dist;
+
+        if (i % 3 === 0) {
+          const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.25 + Math.random() * 0.35, 0), rockMat);
+          rock.position.set(rx, seabedY + 0.15, rz);
+          rock.rotation.set(Math.random(), Math.random(), Math.random());
+          seaGroup.add(rock);
+        } else if (i % 3 === 1) {
+          const coralGroup = new THREE.Group();
+          coralGroup.position.set(rx, seabedY + 0.05, rz);
+          const cMat = new THREE.MeshStandardMaterial({
+            color: coralColors[i % coralColors.length],
+            roughness: 0.55
+          });
+          for (let b = 0; b < 4; b++) {
+            const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.06, 0.35 + Math.random() * 0.25, 7), cMat);
+            branch.position.set((Math.random() - 0.5) * 0.2, 0.18, (Math.random() - 0.5) * 0.2);
+            branch.rotation.set((Math.random() - 0.5) * 0.5, 0, (Math.random() - 0.5) * 0.5);
+            coralGroup.add(branch);
+          }
+          seaGroup.add(coralGroup);
+        } else {
+          const weedMat = new THREE.MeshStandardMaterial({
+            color: '#0d9488',
+            roughness: 0.7,
+            side: THREE.DoubleSide
+          });
+          const weed = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.85 + Math.random() * 0.5, 1, 4), weedMat);
+          weed.position.set(rx, seabedY + 0.45, rz);
+          weed.rotation.y = Math.random() * Math.PI;
+          seaGroup.add(weed);
+          parts.seaweeds.push({ mesh: weed, phase: Math.random() * Math.PI * 2 });
+        }
+      }
+
+      // 4. Floating Coastal Marker Buoys (Pelampung Tanda Bagan) around perimeter
+      const buoyPositions = [
+        [-3.6, -3.2],
+        [ 3.6, -3.2],
+        [ 3.8,  3.4],
+        [-3.8,  3.4]
+      ];
+      const buoyOrangeMat = new THREE.MeshStandardMaterial({ color: '#f97316', roughness: 0.35, metalness: 0.15 });
+      const buoyWhiteMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.3 });
+      const buoyGlowMat = new THREE.MeshBasicMaterial({ color: '#fbbf24' });
+
+      buoyPositions.forEach(([bx, bz], idx) => {
+        const buoyGrp = new THREE.Group();
+        buoyGrp.position.set(bx, 0, bz);
+
+        const floatBody = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), buoyOrangeMat);
+        floatBody.scale.set(1, 0.82, 1);
+        buoyGrp.add(floatBody);
+
+        const stripeBand = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.225, 0.08, 16), buoyWhiteMat);
+        buoyGrp.add(stripeBand);
+
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.36, 8), buoyWhiteMat);
+        mast.position.y = 0.25;
+        buoyGrp.add(mast);
+
+        const tipBeacon = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 10), buoyGlowMat);
+        tipBeacon.position.y = 0.44;
+        buoyGrp.add(tipBeacon);
+
+        seaGroup.add(buoyGrp);
+        parts.buoys.push({ group: buoyGrp, x: bx, z: bz, phase: idx * 1.4 });
+      });
+
+      // 5. Underwater Attractant Light Cone & Lamp (Lampu Pemikat Ikan under Deck)
+      const lampHousing = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.21, 0.16, 16),
+        new THREE.MeshStandardMaterial({ color: '#1e293b', metalness: 0.8, roughness: 0.3 })
+      );
+      lampHousing.position.set(0, 2.28, -0.55);
+      seaGroup.add(lampHousing);
+
+      parts.attractantBulbMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.13, 16, 16),
+        new THREE.MeshBasicMaterial({ color: '#00e5d0' })
+      );
+      parts.attractantBulbMesh.position.set(0, 2.18, -0.55);
+      seaGroup.add(parts.attractantBulbMesh);
+
+      const coneGeo = new THREE.ConeGeometry(2.55, 5.4, 28, 1, true);
+      const coneMat = new THREE.MeshBasicMaterial({
+        color: '#00e5d0',
+        transparent: true,
+        opacity: 0.13,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      parts.attractantConeMesh = new THREE.Mesh(coneGeo, coneMat);
+      parts.attractantConeMesh.position.set(0, -0.45, -0.25);
+      seaGroup.add(parts.attractantConeMesh);
+
+      parts.attractantLight = new THREE.PointLight('#00e5d0', 2.0, 13);
+      parts.attractantLight.position.set(0, -0.55, 0.15);
+      seaGroup.add(parts.attractantLight);
+
+      // 6. Rising Underwater Air Bubbles
+      const bubbleGeo = new THREE.SphereGeometry(0.032, 8, 8);
+      const bubbleMat = new THREE.MeshBasicMaterial({
+        color: '#e0f7fa',
+        transparent: true,
+        opacity: 0.55
+      });
+      for (let i = 0; i < 40; i++) {
+        const b = new THREE.Mesh(bubbleGeo, bubbleMat);
+        b.position.set(
+          (Math.random() - 0.5) * 6.5,
+          -4.0 + Math.random() * 3.8,
+          (Math.random() - 0.5) * 6.5
+        );
+        seaGroup.add(b);
+        parts.bubbles.push({
+          mesh: b,
+          speed: 0.45 + Math.random() * 0.65,
+          phase: Math.random() * Math.PI * 2
+        });
+      }
+    }
+
+    // =========================================================================
+    // 5. BUILD FULL PROTOTYPE BAGANOVA (MATCHING REAL PHOTO & BLUEPRINT)
+    // =========================================================================
+    function buildBaganovaPrototype() {
+      const pineWoodTex = createWoodTexture('#e2b887', '#b5814b');
+      const postWoodTex = createWoodTexture('#cf9c63', '#966230');
+      const cardboardTex = createCorrugatedCardboardTexture();
+      const netTex = createNetMeshTexture();
+
+      const pineMat = new THREE.MeshStandardMaterial({
+        map: pineWoodTex,
+        roughness: 0.68,
+        metalness: 0.04
+      });
+
+      const postMat = new THREE.MeshStandardMaterial({
+        map: postWoodTex,
+        roughness: 0.62,
+        metalness: 0.06
+      });
+
+      const cardboardMat = new THREE.MeshStandardMaterial({
+        map: cardboardTex,
+        roughness: 0.86,
+        metalness: 0.02
+      });
+
+      const steelMat = new THREE.MeshStandardMaterial({
+        color: '#e2e8f0',
+        roughness: 0.25,
+        metalness: 0.88
+      });
+
+      const darkMetalMat = new THREE.MeshStandardMaterial({
+        color: '#1e293b',
+        roughness: 0.4,
+        metalness: 0.7
+      });
+
+      const zipTieMat = new THREE.MeshStandardMaterial({
+        color: '#f8fafc',
+        roughness: 0.35
+      });
+
+      const bambooMat = new THREE.MeshStandardMaterial({
+        map: createBambooTexture(),
+        roughness: 0.58,
+        metalness: 0.05
+      });
+
+      const darkTimberMat = new THREE.MeshStandardMaterial({
+        map: createWoodTexture('#7c5333', '#4b311d'),
+        roughness: 0.78,
+        metalness: 0.04
+      });
+
+      const zincRoofMat = new THREE.MeshStandardMaterial({
+        map: createCorrugatedZincTexture(),
+        roughness: 0.38,
+        metalness: 0.65
+      });
+
+      const baganGroup = new THREE.Group();
+      scene.add(baganGroup);
+      parts.miniatureGroup = baganGroup;
+
+      const fullScaleGroup = new THREE.Group();
+      fullScaleGroup.visible = false;
+      scene.add(fullScaleGroup);
+      parts.fullScaleGroup = fullScaleGroup;
+
+      // Dimensions matching prototype proportions:
+      // Deck Y = 2.40 (24 cm above water)
+      // Pilings go from seabed Y = -4.20 up to Deck Y = 2.40
+      // 4 Vertical Upper Corner Posts go from Deck Y = 2.40 up to Roof Eave Y = 4.65
+      const deckY = 2.40;
+      const roofEaveY = 4.65;
+      const roofPeakY = 5.45;
+      const seabedY = -4.20;
+
+      const postX = 1.48;
+      const postZ = 1.38;
+
+      // -----------------------------------------------------------------------
+      // A. 4 STILT PILINGS INTO SEABED + 4 UPPER VERTICAL POSTS (TIANG UTAMA)
+      // -----------------------------------------------------------------------
+      const corners = [
+        [-postX, -postZ],
+        [ postX, -postZ],
+        [ postX,  postZ],
+        [-postX,  postZ]
+      ];
+
+      corners.forEach(([cx, cz]) => {
+        // Underwater + Above-water Stilt Piling (from seabed -4.2 to deck 2.4)
+        const stiltLen = deckY - seabedY;
+        const stilt = new THREE.Mesh(new THREE.BoxGeometry(0.18, stiltLen, 0.18), postMat);
+        stilt.position.set(cx, seabedY + stiltLen / 2, cz);
+        stilt.castShadow = true;
+        stilt.receiveShadow = true;
+        baganGroup.add(stilt);
+
+        // Upper Square Wooden Corner Post (from deck 2.4 to roof eave 4.65, just like in the photo!)
+        const upperH = roofEaveY - deckY;
+        const upperPost = new THREE.Mesh(new THREE.BoxGeometry(0.19, upperH, 0.19), postMat);
+        upperPost.position.set(cx, deckY + upperH / 2, cz);
+        upperPost.castShadow = true;
+        upperPost.receiveShadow = true;
+        baganGroup.add(upperPost);
+      });
+
+      // Lower Cross Bracing near Waterline (y = 0.65)
+      [-postZ, postZ].forEach((z) => {
+        const braceX = new THREE.Mesh(new THREE.BoxGeometry(postX * 2 + 0.2, 0.11, 0.11), postMat);
+        braceX.position.set(0, 0.65, z);
+        baganGroup.add(braceX);
+      });
+      [-postX, postX].forEach((x) => {
+        const braceZ = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, postZ * 2 + 0.2), postMat);
+        braceZ.position.set(x, 0.65, 0);
+        baganGroup.add(braceZ);
+      });
+
+      // -----------------------------------------------------------------------
+      // B. SLATTED PINE WOOD DECK WITH CENTRAL RECTANGULAR OPENING (SESUAI FOTO)
+      // -----------------------------------------------------------------------
+      // Under-deck frame beams
+      [-postZ, postZ].forEach((z) => {
+        const frameX = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.16, 0.15), postMat);
+        frameX.position.set(0, deckY - 0.08, z);
+        baganGroup.add(frameX);
+      });
+      [-postX, postX].forEach((x) => {
+        const frameZ = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.16, 3.35), postMat);
+        frameZ.position.set(x, deckY - 0.08, 0);
+        baganGroup.add(frameZ);
+      });
+
+      // Deck Planks arranged exactly like the real photo:
+      // Back section (z = -1.65 to -0.05): vertical pine slats across full width
+      const plankThick = 0.07;
+      for (let i = 0; i < 11; i++) {
+        const px = -1.55 + i * 0.31;
+        const backPlank = new THREE.Mesh(new THREE.BoxGeometry(0.295, plankThick, 1.62), pineMat);
+        backPlank.position.set(px, deckY + plankThick / 2, -0.84);
+        backPlank.castShadow = true;
+        backPlank.receiveShadow = true;
+        baganGroup.add(backPlank);
+      }
+
+      // Front-Left Wing Planks (x = -1.70 to -0.58, z = -0.02 to +1.65)
+      for (let i = 0; i < 4; i++) {
+        const px = -1.55 + i * 0.31;
+        const leftWing = new THREE.Mesh(new THREE.BoxGeometry(0.295, plankThick, 1.65), pineMat);
+        leftWing.position.set(px, deckY + plankThick / 2, 0.81);
+        leftWing.castShadow = true;
+        leftWing.receiveShadow = true;
+        baganGroup.add(leftWing);
+      }
+
+      // Front-Right Wing Planks (x = +0.58 to +1.70, z = -0.02 to +1.65)
+      for (let i = 0; i < 4; i++) {
+        const px = 0.62 + i * 0.31;
+        const rightWing = new THREE.Mesh(new THREE.BoxGeometry(0.295, plankThick, 1.65), pineMat);
+        rightWing.position.set(px, deckY + plankThick / 2, 0.81);
+        rightWing.castShadow = true;
+        rightWing.receiveShadow = true;
+        baganGroup.add(rightWing);
+      }
+
+      // Cross Plank bridging the front edge of the opening (where yellow DC motor sits!)
+      const bridgePlank = new THREE.Mesh(new THREE.BoxGeometry(1.16, plankThick, 0.32), pineMat);
+      bridgePlank.position.set(0, deckY + plankThick / 2, 0.14);
+      bridgePlank.castShadow = true;
+      bridgePlank.receiveShadow = true;
+      baganGroup.add(bridgePlank);
+
+      // White Cable Ties (Kabel Ties) around front corners just like in the real photo!
+      [-1.15, 1.15].forEach((tx) => {
+        const tie = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.085, 0.03), zipTieMat);
+        tie.position.set(tx, deckY + 0.035, 0.95);
+        baganGroup.add(tie);
+      });
+
+      // -----------------------------------------------------------------------
+      // C. TOP FRAME, CORRUGATED CARDBOARD GABLE ROOF & OVERHEAD PULLEY (ATAS)
+      // -----------------------------------------------------------------------
+      // Top horizontal tie beams connecting the 4 upper posts at y = 4.65
+      [-postZ, postZ].forEach((z) => {
+        const topBeamX = new THREE.Mesh(new THREE.BoxGeometry(postX * 2 + 0.2, 0.13, 0.13), postMat);
+        topBeamX.position.set(0, roofEaveY, z);
+        baganGroup.add(topBeamX);
+      });
+      [-postX, postX].forEach((x) => {
+        const topBeamZ = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.13, postZ * 2 + 0.2), postMat);
+        topBeamZ.position.set(x, roofEaveY, 0);
+        baganGroup.add(topBeamZ);
+      });
+
+      // Center Pulley Crossbeam at y = 4.65, z = 0.55 (directly over the center deck opening!)
+      const pulleyBeam = new THREE.Mesh(new THREE.BoxGeometry(postX * 2 + 0.1, 0.12, 0.14), postMat);
+      pulleyBeam.position.set(0, roofEaveY, 0.55);
+      baganGroup.add(pulleyBeam);
+
+      // Overhead Pulley (Katrol Atas) hanging under pulleyBeam at (0, 4.42, 0.55)
+      const pulleyBracket = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.14), darkMetalMat);
+      pulleyBracket.position.set(0, roofEaveY - 0.12, 0.55);
+      baganGroup.add(pulleyBracket);
+
+      const overheadPulley = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.06, 20), steelMat);
+      overheadPulley.rotation.z = Math.PI / 2;
+      overheadPulley.position.set(0, roofEaveY - 0.22, 0.55);
+      baganGroup.add(overheadPulley);
+
+      // Gable Roof Frame & Brown Corrugated Kraft Cardboard Panels (Atap Kardus Cokelat)
+      const roofSpanX = 3.75;
+      const roofSlopeLen = 2.05;
+      const roofAngle = 0.42;
+
+      // Front & Back Triangular Gable Cardboard Walls
+      const gableShape = new THREE.Shape();
+      gableShape.moveTo(-1.82, 0);
+      gableShape.lineTo(1.82, 0);
+      gableShape.lineTo(0, roofPeakY - roofEaveY);
+      gableShape.closePath();
+
+      const gableExtrude = new THREE.ExtrudeGeometry(gableShape, { depth: 0.05, bevelEnabled: false });
+      [-1.58, 1.53].forEach((gz) => {
+        const gableWall = new THREE.Mesh(gableExtrude, cardboardMat);
+        gableWall.position.set(0, roofEaveY + 0.04, gz);
+        gableWall.castShadow = true;
+        baganGroup.add(gableWall);
+      });
+
+      // Left & Right Pitched Corrugated Cardboard Roof Slopes
+      const leftSlope = new THREE.Mesh(new THREE.BoxGeometry(roofSlopeLen, 0.06, 3.45), cardboardMat);
+      leftSlope.position.set(-0.92, (roofEaveY + roofPeakY) / 2 + 0.04, 0);
+      leftSlope.rotation.z = roofAngle;
+      leftSlope.castShadow = true;
+      baganGroup.add(leftSlope);
+
+      const rightSlope = new THREE.Mesh(new THREE.BoxGeometry(roofSlopeLen, 0.06, 3.45), cardboardMat);
+      rightSlope.position.set(0.92, (roofEaveY + roofPeakY) / 2 + 0.04, 0);
+      rightSlope.rotation.z = -roofAngle;
+      rightSlope.castShadow = true;
+      baganGroup.add(rightSlope);
+
+      // Ridge Tape / Cardboard Fold at Peak
+      const ridgeTape = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.06, 3.50), cardboardMat);
+      ridgeTape.position.set(0, roofPeakY + 0.05, 0);
+      baganGroup.add(ridgeTape);
+
+      // Decorative Rafter Beams + Miniature BAGANOVA Signboard + Warm Overhead Test Lamp
+      [-1.0, 0, 1.0].forEach((rz) => {
+        const collarBeam = new THREE.Mesh(new THREE.BoxGeometry(2.65, 0.07, 0.07), postMat);
+        collarBeam.position.set(0, roofEaveY + 0.25, rz);
+        baganGroup.add(collarBeam);
+      });
+
+      const miniSignMat = new THREE.MeshStandardMaterial({
+        map: createSignboardTexture('BAGANOVA', 'SMART BAGAN PROTOTYPE'),
+        roughness: 0.35,
+        emissive: '#062c4d',
+        emissiveIntensity: 0.35
+      });
+      const miniSign = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.34, 0.06), miniSignMat);
+      miniSign.position.set(0, roofEaveY + 0.04, postZ + 0.24);
+      baganGroup.add(miniSign);
+
+      // Warm Test Lantern under Miniature Roof illuminating the electronics deck
+      const miniLampShade = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.11, 16), darkMetalMat);
+      miniLampShade.position.set(0, roofPeakY - 0.22, -0.35);
+      baganGroup.add(miniLampShade);
+
+      const miniLampBulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.075, 12, 12),
+        new THREE.MeshBasicMaterial({ color: '#fde68a' })
+      );
+      miniLampBulb.position.set(0, roofPeakY - 0.28, -0.35);
+      baganGroup.add(miniLampBulb);
+
+      parts.miniLanternLight = new THREE.PointLight('#fcd34d', 1.35, 6.8);
+      parts.miniLanternLight.position.set(0, roofPeakY - 0.36, -0.15);
+      baganGroup.add(parts.miniLanternLight);
+
+      // Corner Gusset Brackets for clean prototype carpentry look
+      corners.forEach(([cx, cz]) => {
+        const collar = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.10, 0.26), darkMetalMat);
+        collar.position.set(cx, deckY + 0.05, cz);
+        baganGroup.add(collar);
+      });
+
+      // -----------------------------------------------------------------------
+      // D. REAL-LIFE ELECTRONICS ON DECK & POSTS (EXACTLY AS IN YOUR PHOTO!)
+      // -----------------------------------------------------------------------
+      const topDeckY = deckY + plankThick;
+
+      // 1. ESP32 DevKit V1 mounted vertically on Front-Right Upper Post (x = +1.48? In photo: right-center post!)
+      // Let's place a dedicated inner-right vertical post or mount on the right-center post just like the photo
+      const espPostX = 0.55;
+      const espPostZ = -0.05;
+      // Add vertical post matching photo's right-center post
+      const midRightPost = new THREE.Mesh(new THREE.BoxGeometry(0.18, roofEaveY - deckY, 0.18), postMat);
+      midRightPost.position.set(espPostX, deckY + (roofEaveY - deckY) / 2, espPostZ);
+      midRightPost.castShadow = true;
+      baganGroup.add(midRightPost);
+
+      const espGroup = new THREE.Group();
+      espGroup.position.set(espPostX, deckY + 1.05, espPostZ + 0.11);
+      baganGroup.add(espGroup);
+
+      const espPcb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.28, 0.54, 0.03),
+        new THREE.MeshStandardMaterial({ color: '#111827', roughness: 0.45 })
+      );
+      espGroup.add(espPcb);
+
+      const espShield = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.22, 0.025), steelMat);
+      espShield.position.set(0, 0.11, 0.02);
+      espGroup.add(espShield);
+
+      // Bright Red Power LED on ESP32 (as seen glowing red in your photo!)
+      parts.espLedMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.024, 10, 10),
+        new THREE.MeshBasicMaterial({ color: '#ff2222' })
+      );
+      parts.espLedMesh.position.set(-0.06, -0.08, 0.025);
+      espGroup.add(parts.espLedMesh);
+
+      const espGlow = new THREE.PointLight('#ff2222', 0.45, 1.5);
+      espGlow.position.set(0, -0.08, 0.12);
+      espGroup.add(espGlow);
+
+      // 2. Green HX711 ADC Module mounted on Front-Left Vertical Post (x = -1.48, z = +1.38)
+      const hxGroup = new THREE.Group();
+      hxGroup.position.set(-postX + 0.11, deckY + 0.72, postZ - 0.15);
+      hxGroup.rotation.y = Math.PI / 2;
+      baganGroup.add(hxGroup);
+
+      const hxPcb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, 0.21, 0.025),
+        new THREE.MeshStandardMaterial({ color: '#16a34a', roughness: 0.4 })
+      );
+      hxGroup.add(hxPcb);
+
+      const hxChip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.02), darkMetalMat);
+      hxChip.position.set(0, 0, 0.02);
+      hxGroup.add(hxChip);
+
+      // 3. Silver Load Cell (5 kg) + Curved Metal Hook/Bolt on Front-Left Deck (x = -1.05, z = +0.72)
+      const lcDeckGroup = new THREE.Group();
+      lcDeckGroup.position.set(-1.05, topDeckY + 0.07, 0.72);
+      lcDeckGroup.rotation.y = 0.25;
+      baganGroup.add(lcDeckGroup);
+
+      const lcBar = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.13, 0.76), steelMat);
+      lcBar.castShadow = true;
+      lcDeckGroup.add(lcBar);
+
+      // White silicone strain-gauge patch on Load Cell
+      const whiteSilicone = new THREE.Mesh(
+        new THREE.BoxGeometry(0.11, 0.025, 0.22),
+        new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 })
+      );
+      whiteSilicone.position.set(0, 0.075, -0.14);
+      lcDeckGroup.add(whiteSilicone);
+
+      // Curved Metal Hook & Nut Assembly (Kait Logam) extending toward the center opening
+      const hookRod = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.56, 12), steelMat);
+      hookRod.rotation.z = Math.PI / 2;
+      hookRod.rotation.y = -0.35;
+      hookRod.position.set(0.28, 0.04, 0.05);
+      lcDeckGroup.add(hookRod);
+
+      const hookNut = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.06, 6), steelMat);
+      hookNut.rotation.z = Math.PI / 2;
+      hookNut.rotation.y = -0.35;
+      hookNut.position.set(0.50, 0.04, 0.12);
+      lcDeckGroup.add(hookNut);
+
+      // 4. Red L298N Motor Driver with Black Heatsink on Right-Center Deck (x = +0.72, z = -0.18)
+      const driverGroup = new THREE.Group();
+      driverGroup.position.set(0.72, topDeckY + 0.02, -0.18);
+      baganGroup.add(driverGroup);
+
+      const driverPcb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.44, 0.03, 0.44),
+        new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.4 })
+      );
+      driverGroup.add(driverPcb);
+
+      // Black Aluminum Heatsink
+      const heatsink = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.24), darkMetalMat);
+      heatsink.position.set(-0.08, 0.12, 0);
+      driverGroup.add(heatsink);
+
+      // Blue Screw Terminals
+      const blueTermMat = new THREE.MeshStandardMaterial({ color: '#0284c7', roughness: 0.4 });
+      const term1 = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.10, 0.22), blueTermMat);
+      term1.position.set(0.15, 0.06, 0.08);
+      const term2 = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.10, 0.16), blueTermMat);
+      term2.position.set(-0.02, 0.06, -0.15);
+      driverGroup.add(term1, term2);
+
+      // Red LED on Driver
+      parts.driverLedMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.018, 8, 8),
+        new THREE.MeshBasicMaterial({ color: '#ff3333' })
+      );
+      parts.driverLedMesh.position.set(0.06, 0.04, 0.04);
+      driverGroup.add(parts.driverLedMesh);
+
+      // 5. Yellow DC Gearbox Motor + White Shaft at Front Edge of Opening (x = +0.26, z = +0.34)
+      const motorGroup = new THREE.Group();
+      motorGroup.position.set(0.26, topDeckY + 0.10, 0.34);
+      motorGroup.rotation.y = -0.32;
+      baganGroup.add(motorGroup);
+
+      const yellowMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.35 });
+      const yellowBody = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.20, 0.44), yellowMat);
+      yellowBody.castShadow = true;
+      motorGroup.add(yellowBody);
+
+      const dcCan = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.22, 16), steelMat);
+      dcCan.rotation.x = Math.PI / 2;
+      dcCan.position.z = -0.32;
+      motorGroup.add(dcCan);
+
+      // White Output Shaft + Winch Spool
+      parts.motorShaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.028, 0.028, 0.34, 12),
+        new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.25 })
+      );
+      parts.motorShaft.rotation.z = Math.PI / 2;
+      parts.motorShaft.position.set(0, -0.02, 0.12);
+      motorGroup.add(parts.motorShaft);
+
+      parts.winchSpool = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.075, 0.075, 0.14, 16),
+        new THREE.MeshStandardMaterial({ color: '#00e5d0', emissive: '#0284c7', emissiveIntensity: 0.3 })
+      );
+      parts.winchSpool.rotation.z = Math.PI / 2;
+      parts.winchSpool.position.set(-0.14, -0.02, 0.12);
+      motorGroup.add(parts.winchSpool);
+
+      // 6. Black 18650 2-Slot Battery Holder + Two Red Cells on Right Deck (x = +1.35, z = +0.42)
+      const battGroup = new THREE.Group();
+      battGroup.position.set(1.35, topDeckY + 0.08, 0.42);
+      battGroup.rotation.y = 0.22;
+      baganGroup.add(battGroup);
+
+      const battCase = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.76), darkMetalMat);
+      battCase.castShadow = true;
+      battGroup.add(battCase);
+
+      const redCellMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.3, metalness: 0.25 });
+      [-0.095, 0.095].forEach((bx) => {
+        const cell = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.082, 0.68, 16), redCellMat);
+        cell.rotation.x = Math.PI / 2;
+        cell.position.set(bx, 0.03, 0);
+        battGroup.add(cell);
+
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.02, 12), steelMat);
+        cap.rotation.x = Math.PI / 2;
+        cap.position.set(bx, 0.03, -0.35);
+        battGroup.add(cap);
+      });
+
+      // 7. Curved Jumper Wires Connecting Components (TubeGeometry)
+      function addJumperWire(pointsArr, hexColor) {
+        const curve = new THREE.CatmullRomCurve3(pointsArr.map(p => new THREE.Vector3(...p)));
+        const wireGeo = new THREE.TubeGeometry(curve, 20, 0.011, 6, false);
+        const wireMat = new THREE.MeshStandardMaterial({ color: hexColor, roughness: 0.5 });
+        baganGroup.add(new THREE.Mesh(wireGeo, wireMat));
+      }
+
+      // Load Cell to HX711 wires
+      addJumperWire([[-1.12, topDeckY + 0.14, 0.42], [-1.25, topDeckY + 0.22, 0.85], [-1.36, deckY + 0.65, 1.22]], '#ef4444');
+      addJumperWire([[-1.08, topDeckY + 0.14, 0.42], [-1.20, topDeckY + 0.18, 0.90], [-1.36, deckY + 0.68, 1.22]], '#22c55e');
+      addJumperWire([[-1.04, topDeckY + 0.14, 0.42], [-1.15, topDeckY + 0.20, 0.95], [-1.36, deckY + 0.71, 1.22]], '#f8fafc');
+
+      // HX711 to ESP32 wires
+      addJumperWire([[-1.36, deckY + 0.78, 1.22], [-0.4, deckY + 1.15, 0.8], [0.42, deckY + 1.10, 0.06]], '#facc15');
+      addJumperWire([[-1.36, deckY + 0.75, 1.22], [-0.4, deckY + 1.10, 0.75], [0.42, deckY + 1.05, 0.06]], '#a855f7');
+
+      // ESP32 to L298N Driver wires
+      addJumperWire([[0.68, deckY + 0.95, 0.06], [0.85, deckY + 0.45, -0.05], [0.78, topDeckY + 0.12, -0.12]], '#f8fafc');
+      addJumperWire([[0.66, deckY + 0.90, 0.06], [0.82, deckY + 0.40, -0.08], [0.74, topDeckY + 0.12, -0.15]], '#f97316');
+
+      // Battery Holder to L298N Driver power wires
+      addJumperWire([[1.25, topDeckY + 0.14, 0.10], [1.05, topDeckY + 0.25, -0.05], [0.85, topDeckY + 0.12, -0.10]], '#ef4444');
+      addJumperWire([[1.30, topDeckY + 0.14, 0.10], [1.08, topDeckY + 0.28, -0.08], [0.85, topDeckY + 0.12, -0.14]], '#1e293b');
+
+      // 8. Limit Switch Atas (just under Deck Opening) & Limit Switch Bawah (near Waterline)
+      const lsTopGroup = new THREE.Group();
+      lsTopGroup.position.set(0.48, deckY - 0.16, 0.55);
+      scene.add(lsTopGroup);
+      lsTopGroup.add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.12), darkMetalMat));
+      parts.limitTopLever = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.025, 0.04), steelMat);
+      parts.limitTopLever.position.set(-0.14, -0.04, 0);
+      parts.limitTopLever.rotation.z = 0.25;
+      lsTopGroup.add(parts.limitTopLever);
+      parts.limitTopLed = new THREE.Mesh(
+        new THREE.SphereGeometry(0.032, 10, 10),
+        new THREE.MeshBasicMaterial({ color: '#10b981' })
+      );
+      parts.limitTopLed.position.set(0, 0.10, 0);
+      lsTopGroup.add(parts.limitTopLed);
+
+      const lsBotGroup = new THREE.Group();
+      lsBotGroup.position.set(0.55, 0.22, 0.55);
+      scene.add(lsBotGroup);
+      lsBotGroup.add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.15, 0.12), darkMetalMat));
+      parts.limitBotLed = new THREE.Mesh(
+        new THREE.SphereGeometry(0.032, 10, 10),
+        new THREE.MeshBasicMaterial({ color: '#10b981' })
+      );
+      parts.limitBotLed.position.set(0, 0.09, 0);
+      lsBotGroup.add(parts.limitBotLed);
+
+      // -----------------------------------------------------------------------
+      // E. HOIST MECHANISM: MAIN ROPE, X-SPREADER, 4 CORNER ROPES & LIFT NET
+      // -----------------------------------------------------------------------
+      const ropeMat = new THREE.MeshStandardMaterial({
+        color: '#00e5d0',
+        emissive: '#00e5d0',
+        emissiveIntensity: 0.45,
+        roughness: 0.3
+      });
+
+      // Rope segment 1: From Motor Spool (0.12, 2.55, 0.46) up to Overhead Pulley (0, 4.43, 0.55)
+      const pStart = new THREE.Vector3(0.12, topDeckY + 0.08, 0.46);
+      const pPulley = new THREE.Vector3(0, roofEaveY - 0.22, 0.55);
+      const d1 = new THREE.Vector3().subVectors(pPulley, pStart);
+      const ropeMotorToPulley = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, d1.length(), 8), ropeMat);
+      ropeMotorToPulley.position.copy(pStart).add(pPulley).multiplyScalar(0.5);
+      ropeMotorToPulley.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d1.clone().normalize());
+      baganGroup.add(ropeMotorToPulley);
+
+      // Rope segment 2: Dynamic Vertical Main Rope from Overhead Pulley down to Moving Hoist Group
+      parts.ropePulleyToLoadCell = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 1.0, 10), ropeMat);
+      scene.add(parts.ropePulleyToLoadCell);
+
+      // Moving Hoist Group (centered at x = 0, z = 0.55 directly under the deck opening)
+      parts.hoistGroup = new THREE.Group();
+      parts.hoistGroup.position.set(0, -1.2, 0.55);
+      scene.add(parts.hoistGroup);
+
+      // Inline Tension Shackle / Swivel Connector at top of Hoist Group (y = 0.95)
+      const swivel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 12), steelMat);
+      swivel.position.y = 0.95;
+      parts.hoistGroup.add(swivel);
+
+      // Industrial S-Beam Inline Load Cell (Visible in Full-Scale Sea Bagan Mode)
+      const sBeamGroup = new THREE.Group();
+      sBeamGroup.position.set(0, 0.76, 0);
+      sBeamGroup.visible = false;
+      const sBeamBody = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.22, 0.10),
+        new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.25, metalness: 0.9 })
+      );
+      sBeamGroup.add(sBeamBody);
+      const sBeamCollar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.06, 0.12),
+        new THREE.MeshStandardMaterial({ color: '#0284c7', roughness: 0.35 })
+      );
+      sBeamGroup.add(sBeamCollar);
+      parts.hoistGroup.add(sBeamGroup);
+      parts.sBeamInlineGroup = sBeamGroup;
+
+      // Cross Spreader Frame (X-Spreader at y = 0.55)
+      const spreaderSpan = 1.28;
+      const spBar1 = new THREE.Mesh(new THREE.BoxGeometry(spreaderSpan, 0.055, 0.08), postMat);
+      spBar1.rotation.y = Math.PI / 4;
+      spBar1.position.y = 0.55;
+      const spBar2 = new THREE.Mesh(new THREE.BoxGeometry(spreaderSpan, 0.055, 0.08), postMat);
+      spBar2.rotation.y = -Math.PI / 4;
+      spBar2.position.y = 0.55;
+      const spHub = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.07, 14), steelMat);
+      spHub.position.y = 0.55;
+      parts.hoistGroup.add(spBar1, spBar2, spHub);
+
+      // Link rope from swivel (0.95) to spreader hub (0.55)
+      const linkLine = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.40, 8), ropeMat);
+      linkLine.position.y = 0.75;
+      parts.hoistGroup.add(linkLine);
+
+      // 4 Corner Tips of X-Spreader -> 4 Corner Ropes down to Net Mouth (y = 0.0)
+      const tipDist = (spreaderSpan / 2) * Math.cos(Math.PI / 4);
+      const netHalf = 0.76;
+      const spTips = [
+        new THREE.Vector3(-tipDist, 0.55, -tipDist),
+        new THREE.Vector3( tipDist, 0.55, -tipDist),
+        new THREE.Vector3( tipDist, 0.55,  tipDist),
+        new THREE.Vector3(-tipDist, 0.55,  tipDist)
+      ];
+      const netCorners = [
+        new THREE.Vector3(-netHalf, 0, -netHalf),
+        new THREE.Vector3( netHalf, 0, -netHalf),
+        new THREE.Vector3( netHalf, 0,  netHalf),
+        new THREE.Vector3(-netHalf, 0,  netHalf)
+      ];
+
+      const cornerRopeMat = new THREE.MeshStandardMaterial({
+        color: '#38bdf8',
+        emissive: '#0284c7',
+        emissiveIntensity: 0.35
+      });
+
+      for (let i = 0; i < 4; i++) {
+        const diff = new THREE.Vector3().subVectors(netCorners[i], spTips[i]);
+        const cRope = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, diff.length(), 8), cornerRopeMat);
+        cRope.position.copy(spTips[i]).add(netCorners[i]).multiplyScalar(0.5);
+        cRope.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), diff.clone().normalize());
+        parts.hoistGroup.add(cRope);
+      }
+
+      // Square Lift Net Pouch (y = 0.0 down to y = -0.62) — upgraded metallic-teal visible rim & corner shackles
+      const netWidth = netHalf * 2;
+      const rimThick = 0.042;
+      const netRimMat = new THREE.MeshStandardMaterial({
+        color: '#0ea5e9',
+        emissive: '#0284c7',
+        emissiveIntensity: 0.28,
+        roughness: 0.32,
+        metalness: 0.65
+      });
+      [
+        { pos: [0, 0, -netHalf], size: [netWidth, rimThick, rimThick] },
+        { pos: [0, 0,  netHalf], size: [netWidth, rimThick, rimThick] },
+        { pos: [-netHalf, 0, 0], size: [rimThick, rimThick, netWidth] },
+        { pos: [ netHalf, 0, 0], size: [rimThick, rimThick, netWidth] }
+      ].forEach((rb) => {
+        const rim = new THREE.Mesh(new THREE.BoxGeometry(...rb.size), netRimMat);
+        rim.position.set(...rb.pos);
+        parts.hoistGroup.add(rim);
+      });
+
+      netCorners.forEach((nc) => {
+        const shackle = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 10), steelMat);
+        shackle.position.copy(nc);
+        parts.hoistGroup.add(shackle);
+      });
+
+      const netDepth = 0.62;
+      const pouchGeo = new THREE.CylinderGeometry(netHalf * 1.38, netHalf * 0.78, netDepth, 4, 4, true);
+      pouchGeo.rotateY(Math.PI / 4);
+      const pouchMat = new THREE.MeshStandardMaterial({
+        color: '#0f172a',
+        emissive: '#075985',
+        emissiveIntensity: 0.25,
+        alphaMap: netTex,
+        transparent: true,
+        opacity: 0.90,
+        side: THREE.DoubleSide,
+        roughness: 0.78
+      });
+      parts.netMesh = new THREE.Mesh(pouchGeo, pouchMat);
+      parts.netMesh.position.y = -netDepth / 2;
+      parts.hoistGroup.add(parts.netMesh);
+
+      const pouchFloor = new THREE.Mesh(new THREE.PlaneGeometry(netWidth * 0.54, netWidth * 0.54), pouchMat);
+      pouchFloor.rotation.x = -Math.PI / 2;
+      pouchFloor.position.y = -netDepth;
+      parts.hoistGroup.add(pouchFloor);
+
+      // -----------------------------------------------------------------------
+      // F. BUILD FULL-SCALE SEA BAGAN TANCAP MODEL (SKALA LAUT NYATA 85 KG)
+      // -----------------------------------------------------------------------
+      const fDeckY = 2.45;
+      const fEaveY = 4.78;
+      const fPeakY = 5.65;
+      const fPostX = 1.65;
+      const fPostZ = 1.52;
+
+      const fCorners = [
+        [-fPostX, -fPostZ],
+        [ fPostX, -fPostZ],
+        [ fPostX,  fPostZ],
+        [-fPostX,  fPostZ]
+      ];
+
+      const lashingMat = new THREE.MeshStandardMaterial({ color: '#1c1917', roughness: 0.85 });
+
+      // 1. Tall Segmented Bamboo Stilts with Bamboo Node Rings & Rope Lashings
+      fCorners.forEach(([cx, cz]) => {
+        const lowerH = fDeckY - seabedY;
+        const bambooPiling = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.115, 0.145, lowerH, 14),
+          bambooMat
+        );
+        bambooPiling.position.set(cx, seabedY + lowerH / 2, cz);
+        bambooPiling.castShadow = true;
+        bambooPiling.receiveShadow = true;
+        fullScaleGroup.add(bambooPiling);
+
+        // Realistic bamboo node rings along underwater/above-water piling
+        for (let ny = -3.4; ny < fDeckY; ny += 0.95) {
+          const nodeRing = new THREE.Mesh(new THREE.TorusGeometry(0.128, 0.018, 8, 16), lashingMat);
+          nodeRing.rotation.x = Math.PI / 2;
+          nodeRing.position.set(cx, ny, cz);
+          fullScaleGroup.add(nodeRing);
+        }
+
+        const upperH = fEaveY - fDeckY;
+        const upperBamboo = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.098, 0.115, upperH, 14),
+          bambooMat
+        );
+        upperBamboo.position.set(cx, fDeckY + upperH / 2, cz);
+        upperBamboo.castShadow = true;
+        fullScaleGroup.add(upperBamboo);
+
+        // Rope lashings at deck & eave joints
+        [fDeckY + 0.05, fDeckY + 0.75, fEaveY].forEach((ly) => {
+          const lash = new THREE.Mesh(new THREE.CylinderGeometry(0.132, 0.132, 0.12, 12), lashingMat);
+          lash.position.set(cx, ly, cz);
+          fullScaleGroup.add(lash);
+        });
+      });
+
+      // Mid-column diagonal & horizontal bamboo braces near waterline
+      [-fPostZ, fPostZ].forEach((z) => {
+        const hBrace = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, fPostX * 2 + 0.35, 10), bambooMat);
+        hBrace.rotation.z = Math.PI / 2;
+        hBrace.position.set(0, 0.72, z);
+        fullScaleGroup.add(hBrace);
+
+        const diagBrace = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 3.65, 10), bambooMat);
+        diagBrace.rotation.z = 0.96;
+        diagBrace.position.set(0, 1.45, z);
+        fullScaleGroup.add(diagBrace);
+      });
+      [-fPostX, fPostX].forEach((x) => {
+        const hBraceZ = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, fPostZ * 2 + 0.35, 10), bambooMat);
+        hBraceZ.rotation.x = Math.PI / 2;
+        hBraceZ.position.set(x, 0.72, 0);
+        fullScaleGroup.add(hBraceZ);
+      });
+
+      // Bamboo Safety Railings (2-Tier) + Corner Stanchions around Deck
+      [-fPostZ, fPostZ].forEach((z) => {
+        [0.42, 0.80].forEach((ry) => {
+          const railX = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, fPostX * 2 + 0.25, 10), bambooMat);
+          railX.rotation.z = Math.PI / 2;
+          railX.position.set(0, fDeckY + ry, z);
+          fullScaleGroup.add(railX);
+        });
+      });
+      [-fPostX, fPostX].forEach((x) => {
+        [0.42, 0.80].forEach((ry) => {
+          const railZ = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, fPostZ * 2 + 0.25, 10), bambooMat);
+          railZ.rotation.x = Math.PI / 2;
+          railZ.position.set(x, fDeckY + ry, 0);
+          fullScaleGroup.add(railZ);
+        });
+      });
+
+      // 2. Wider Weathered Fisherman Timber Deck with Central Net Well
+      const fPlankThick = 0.08;
+      const fTopDeckY = fDeckY + fPlankThick;
+      for (let i = 0; i < 12; i++) {
+        const px = -1.72 + i * 0.312;
+        const backTimber = new THREE.Mesh(new THREE.BoxGeometry(0.295, fPlankThick, 1.85), darkTimberMat);
+        backTimber.position.set(px, fDeckY + fPlankThick / 2, -0.88);
+        backTimber.castShadow = true;
+        backTimber.receiveShadow = true;
+        fullScaleGroup.add(backTimber);
+      }
+      for (let i = 0; i < 4; i++) {
+        const px = -1.72 + i * 0.312;
+        const leftDeck = new THREE.Mesh(new THREE.BoxGeometry(0.295, fPlankThick, 1.82), darkTimberMat);
+        leftDeck.position.set(px, fDeckY + fPlankThick / 2, 0.90);
+        leftDeck.castShadow = true;
+        leftDeck.receiveShadow = true;
+        fullScaleGroup.add(leftDeck);
+      }
+      for (let i = 0; i < 4; i++) {
+        const px = 0.78 + i * 0.312;
+        const rightDeck = new THREE.Mesh(new THREE.BoxGeometry(0.295, fPlankThick, 1.82), darkTimberMat);
+        rightDeck.position.set(px, fDeckY + fPlankThick / 2, 0.90);
+        rightDeck.castShadow = true;
+        rightDeck.receiveShadow = true;
+        fullScaleGroup.add(rightDeck);
+      }
+      const fBridgeBeam = new THREE.Mesh(new THREE.BoxGeometry(1.56, fPlankThick, 0.36), darkTimberMat);
+      fBridgeBeam.position.set(0, fDeckY + fPlankThick / 2, 0.14);
+      fullScaleGroup.add(fBridgeBeam);
+
+      // Slatted Bamboo Cabin Back Windbreak Wall (Gubuk Bagan)
+      for (let i = 0; i < 11; i++) {
+        const slat = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.038, 1.38, 8), bambooMat);
+        slat.position.set(-1.35 + i * 0.27, fTopDeckY + 0.69, -fPostZ + 0.06);
+        slat.castShadow = true;
+        fullScaleGroup.add(slat);
+      }
+
+      // Orange & White Maritime Life Ring (Pelampung Keselamatan) mounted on Left Railing
+      const lifeRingGrp = new THREE.Group();
+      lifeRingGrp.position.set(-fPostX - 0.08, fDeckY + 0.62, 0.35);
+      lifeRingGrp.rotation.y = Math.PI / 2;
+      const ringBody = new THREE.Mesh(
+        new THREE.TorusGeometry(0.26, 0.075, 12, 24),
+        new THREE.MeshStandardMaterial({ color: '#f97316', roughness: 0.35 })
+      );
+      lifeRingGrp.add(ringBody);
+      [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2].forEach((ang) => {
+        const tape = new THREE.Mesh(
+          new THREE.BoxGeometry(0.11, 0.16, 0.16),
+          new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.25 })
+        );
+        tape.position.set(Math.cos(ang) * 0.26, Math.sin(ang) * 0.26, 0);
+        tape.rotation.z = ang;
+        lifeRingGrp.add(tape);
+      });
+      fullScaleGroup.add(lifeRingGrp);
+
+      // Fisherman Harvest Basket (Keranjang Panen) on Front-Left Deck
+      const basketPts = [
+        new THREE.Vector2(0.0, 0.0),
+        new THREE.Vector2(0.20, 0.0),
+        new THREE.Vector2(0.29, 0.34),
+        new THREE.Vector2(0.25, 0.34),
+        new THREE.Vector2(0.17, 0.04),
+        new THREE.Vector2(0.0, 0.04)
+      ];
+      const basketMesh = new THREE.Mesh(
+        new THREE.LatheGeometry(basketPts, 18),
+        new THREE.MeshStandardMaterial({ color: '#0ea5e9', roughness: 0.45, metalness: 0.1 })
+      );
+      basketMesh.position.set(-1.18, fTopDeckY, 0.82);
+      basketMesh.castShadow = true;
+      fullScaleGroup.add(basketMesh);
+
+      // Side Wooden Boarding Ladder down toward Water
+      for (let step = 0; step < 4; step++) {
+        const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.56, 8), bambooMat);
+        rung.rotation.x = Math.PI / 2;
+        rung.position.set(-fPostX - 0.12, fDeckY - 0.35 - step * 0.42, -0.55);
+        fullScaleGroup.add(rung);
+      }
+
+      // 3. Hut Corrugated Zinc Roof + Wooden Trusses + Solar Panel + Illuminated Signboard + Beacon
+      [-fPostZ, fPostZ].forEach((z) => {
+        const beamX = new THREE.Mesh(new THREE.BoxGeometry(fPostX * 2 + 0.25, 0.15, 0.15), darkTimberMat);
+        beamX.position.set(0, fEaveY, z);
+        fullScaleGroup.add(beamX);
+      });
+      [-fPostX, fPostX].forEach((x) => {
+        const beamZ = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, fPostZ * 2 + 0.25), darkTimberMat);
+        beamZ.position.set(x, fEaveY, 0);
+        fullScaleGroup.add(beamZ);
+      });
+
+      // Roof Rafter Trusses (Kaso Atap)
+      [-1.1, 0, 1.1].forEach((rz) => {
+        const tie = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.08, 0.08), darkTimberMat);
+        tie.position.set(0, fEaveY + 0.22, rz);
+        fullScaleGroup.add(tie);
+      });
+
+      const fPulleyBeam = new THREE.Mesh(new THREE.BoxGeometry(fPostX * 2 + 0.15, 0.16, 0.16), darkTimberMat);
+      fPulleyBeam.position.set(0, fEaveY, 0.55);
+      fullScaleGroup.add(fPulleyBeam);
+
+      const fPulleyBracket = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.34, 0.20), darkMetalMat);
+      fPulleyBracket.position.set(0, fEaveY - 0.18, 0.55);
+      fullScaleGroup.add(fPulleyBracket);
+
+      const fPulleyWheel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.09, 24), steelMat);
+      fPulleyWheel.rotation.z = Math.PI / 2;
+      fPulleyWheel.position.set(0, fEaveY - 0.32, 0.55);
+      fullScaleGroup.add(fPulleyWheel);
+
+      // Corrugated Zinc Roof Slopes (wider overhang with metal trim fascia)
+      const fSlopeLeft = new THREE.Mesh(new THREE.BoxGeometry(2.42, 0.055, 3.92), zincRoofMat);
+      fSlopeLeft.position.set(-1.08, (fEaveY + fPeakY) / 2 + 0.04, 0);
+      fSlopeLeft.rotation.z = 0.40;
+      fSlopeLeft.castShadow = true;
+      fullScaleGroup.add(fSlopeLeft);
+
+      const fSlopeRight = new THREE.Mesh(new THREE.BoxGeometry(2.42, 0.055, 3.92), zincRoofMat);
+      fSlopeRight.position.set(1.08, (fEaveY + fPeakY) / 2 + 0.04, 0);
+      fSlopeRight.rotation.z = -0.40;
+      fSlopeRight.castShadow = true;
+      fullScaleGroup.add(fSlopeRight);
+
+      const fRidge = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 3.95), zincRoofMat);
+      fRidge.position.set(0, fPeakY + 0.06, 0);
+      fullScaleGroup.add(fRidge);
+
+      // Navigation Beacon Mast on Roof Peak
+      const beaconPole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.55, 10), steelMat);
+      beaconPole.position.set(0, fPeakY + 0.34, 1.35);
+      fullScaleGroup.add(beaconPole);
+      parts.beaconLedMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.085, 14, 14),
+        new THREE.MeshBasicMaterial({ color: '#00e5d0' })
+      );
+      parts.beaconLedMesh.position.set(0, fPeakY + 0.64, 1.35);
+      fullScaleGroup.add(parts.beaconLedMesh);
+
+      // BAGANOVA Illuminated Front Signboard
+      const fullSignMat = new THREE.MeshStandardMaterial({
+        map: createSignboardTexture('BAGANOVA', 'SMART AUTOMATED BAGAN'),
+        roughness: 0.32,
+        emissive: '#063259',
+        emissiveIntensity: 0.42
+      });
+      const fullSign = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.38, 0.07), fullSignMat);
+      fullSign.position.set(0, fEaveY + 0.04, fPostZ + 0.16);
+      fullScaleGroup.add(fullSign);
+
+      // Warm Hanging Cabin Work Lantern illuminating the Deck & Winch
+      const lanternCap = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.12, 16), darkMetalMat);
+      lanternCap.position.set(0, fPeakY - 0.25, -0.30);
+      fullScaleGroup.add(lanternCap);
+
+      parts.hangLanternBulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 14, 14),
+        new THREE.MeshBasicMaterial({ color: '#fde68a' })
+      );
+      parts.hangLanternBulb.position.set(0, fPeakY - 0.33, -0.30);
+      fullScaleGroup.add(parts.hangLanternBulb);
+
+      parts.hangLanternLight = new THREE.PointLight('#fbbf24', 1.85, 8.2);
+      parts.hangLanternLight.position.set(0, fPeakY - 0.45, -0.10);
+      fullScaleGroup.add(parts.hangLanternLight);
+
+      // Monocrystalline Solar Panel with Grid Texture on Right Zinc Slope
+      const solarFrame = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.055, 1.65), steelMat);
+      solarFrame.position.set(1.02, (fEaveY + fPeakY) / 2 + 0.16, -0.35);
+      solarFrame.rotation.z = -0.40;
+      fullScaleGroup.add(solarFrame);
+
+      const solarCells = new THREE.Mesh(
+        new THREE.BoxGeometry(1.12, 0.025, 1.54),
+        new THREE.MeshStandardMaterial({
+          map: createSolarPanelTexture(),
+          emissive: '#0369a1',
+          emissiveIntensity: 0.25,
+          roughness: 0.16,
+          metalness: 0.65
+        })
+      );
+      solarCells.position.set(1.04, (fEaveY + fPeakY) / 2 + 0.19, -0.35);
+      solarCells.rotation.z = -0.40;
+      fullScaleGroup.add(solarCells);
+
+      // 4. Waterproof IP65 Control Panel Box with Live OLED Screen Preview
+      const ip65Post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, fEaveY - fDeckY, 10), bambooMat);
+      ip65Post.position.set(0.85, fDeckY + (fEaveY - fDeckY) / 2, -0.08);
+      fullScaleGroup.add(ip65Post);
+
+      const ip65Box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.60, 0.72, 0.26),
+        new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.32, metalness: 0.45 })
+      );
+      ip65Box.position.set(0.85, fDeckY + 1.15, 0.08);
+      ip65Box.castShadow = true;
+      fullScaleGroup.add(ip65Box);
+
+      const ip65Screen = new THREE.Mesh(
+        new THREE.BoxGeometry(0.46, 0.28, 0.02),
+        new THREE.MeshStandardMaterial({
+          map: createOledPanelTexture(),
+          emissive: '#0284c7',
+          emissiveIntensity: 0.45,
+          roughness: 0.2
+        })
+      );
+      ip65Screen.position.set(0.85, fDeckY + 1.28, 0.215);
+      fullScaleGroup.add(ip65Screen);
+
+      parts.fullPanelLedMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.036, 10, 10),
+        new THREE.MeshBasicMaterial({ color: '#10b981' })
+      );
+      parts.fullPanelLedMesh.position.set(0.70, fDeckY + 1.00, 0.22);
+      fullScaleGroup.add(parts.fullPanelLedMesh);
+
+      // Emergency Stop Red Mushroom Button on IP65 Box
+      const estopCap = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.04, 0.04, 14),
+        new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.3 })
+      );
+      estopCap.rotation.x = Math.PI / 2;
+      estopCap.position.set(0.96, fDeckY + 1.00, 0.23);
+      fullScaleGroup.add(estopCap);
+
+      // 5. Heavy-Duty Industrial Winch 24V & Flanged Steel Drum at Center Bridge
+      const fWinchBase = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.11, 0.58), darkMetalMat);
+      fWinchBase.position.set(0, fTopDeckY + 0.055, 0.16);
+      fullScaleGroup.add(fWinchBase);
+
+      const fMotorCan = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.19, 0.19, 0.46, 20),
+        new THREE.MeshStandardMaterial({ color: '#0369a1', roughness: 0.28, metalness: 0.78 })
+      );
+      fMotorCan.rotation.z = Math.PI / 2;
+      fMotorCan.position.set(0.20, fTopDeckY + 0.25, 0.16);
+      fMotorCan.castShadow = true;
+      fullScaleGroup.add(fMotorCan);
+
+      parts.fullMotorShaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.048, 0.048, 0.56, 12),
+        steelMat
+      );
+      parts.fullMotorShaft.rotation.z = Math.PI / 2;
+      parts.fullMotorShaft.position.set(-0.08, fTopDeckY + 0.25, 0.16);
+      fullScaleGroup.add(parts.fullMotorShaft);
+
+      parts.fullWinchSpool = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.15, 0.28, 20),
+        new THREE.MeshStandardMaterial({ color: '#00e5d0', emissive: '#0284c7', emissiveIntensity: 0.38, metalness: 0.55, roughness: 0.3 })
+      );
+      parts.fullWinchSpool.rotation.z = Math.PI / 2;
+      parts.fullWinchSpool.position.set(-0.18, fTopDeckY + 0.25, 0.16);
+      fullScaleGroup.add(parts.fullWinchSpool);
+
+      // Steel Drum Flanges
+      [-0.32, -0.04].forEach((fx) => {
+        const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.025, 20), steelMat);
+        flange.rotation.z = Math.PI / 2;
+        flange.position.set(fx, fTopDeckY + 0.25, 0.16);
+        fullScaleGroup.add(flange);
+      });
+
+      // Main rope segment from Industrial Winch Drum to Heavy Overhead Pulley
+      const fStart = new THREE.Vector3(-0.18, fTopDeckY + 0.29, 0.16);
+      const fPulley = new THREE.Vector3(0, fEaveY - 0.32, 0.55);
+      const fd1 = new THREE.Vector3().subVectors(fPulley, fStart);
+      const fRopeWinchToPulley = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, fd1.length(), 8), ropeMat);
+      fRopeWinchToPulley.position.copy(fStart).add(fPulley).multiplyScalar(0.5);
+      fRopeWinchToPulley.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), fd1.clone().normalize());
+      fullScaleGroup.add(fRopeWinchToPulley);
+
+      // 6. Marine 12V/24V Deep-Cycle Battery Box on Right Deck
+      const marineBattBox = new THREE.Mesh(
+        new THREE.BoxGeometry(0.56, 0.38, 0.42),
+        new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.45 })
+      );
+      marineBattBox.position.set(1.25, fTopDeckY + 0.19, 0.62);
+      marineBattBox.castShadow = true;
+      fullScaleGroup.add(marineBattBox);
+
+      const marineBattLid = new THREE.Mesh(
+        new THREE.BoxGeometry(0.58, 0.07, 0.44),
+        new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.35 })
+      );
+      marineBattLid.position.set(1.25, fTopDeckY + 0.40, 0.62);
+      fullScaleGroup.add(marineBattLid);
+
+      // -----------------------------------------------------------------------
+      // G. REGISTER 3D COMPONENT LABELS (MODE-AWARE: MINIATUR vs LAUT NYATA)
+      // -----------------------------------------------------------------------
+      function registerLabel(parent, x, y, z, text, mode = 'both') {
+        const anchor = new THREE.Object3D();
+        anchor.position.set(x, y, z);
+        parent.add(anchor);
+
+        const el = document.createElement('div');
+        el.className = 'label-3d-pin';
+        el.innerHTML = `
+          <div class="label-3d-badge">
+            <span class="label-3d-dot"></span>
+            <span class="label-text-content">${text}</span>
+          </div>
+          <div class="label-3d-stem"></div>
+        `;
+        document.getElementById('labels-layer').appendChild(el);
+        const textSpan = el.querySelector('.label-text-content');
+        parts.anchors.push({ obj: anchor, el, mode, textSpan });
+        return textSpan;
+      }
+
+      // Miniature mode labels
+      registerLabel(baganGroup, 0, roofPeakY + 0.15, 0, 'Atap Kardus & Katrol Atas', 'miniature');
+      registerLabel(baganGroup, espPostX, deckY + 1.45, espPostZ, 'ESP32 DevKit', 'miniature');
+      registerLabel(baganGroup, -postX, deckY + 1.0, postZ - 0.15, 'Modul HX711', 'miniature');
+      registerLabel(baganGroup, -1.05, topDeckY + 0.3, 0.72, 'Load Cell 5 kg', 'miniature');
+      registerLabel(baganGroup, 0.72, topDeckY + 0.35, -0.18, 'Driver L298N', 'miniature');
+      registerLabel(baganGroup, 0.26, topDeckY + 0.32, 0.34, 'Motor DC 12V', 'miniature');
+      registerLabel(baganGroup, 1.35, topDeckY + 0.3, 0.42, 'Baterai 18650', 'miniature');
+
+      // Full-scale Sea Bagan labels
+      registerLabel(fullScaleGroup, 0, fPeakY + 0.25, 0, 'Atap Seng & Panel Surya', 'fullscale');
+      registerLabel(fullScaleGroup, 0.85, fDeckY + 1.65, 0.08, 'Panel Box IP65 (ESP32 + Relay)', 'fullscale');
+      registerLabel(fullScaleGroup, 0.05, fTopDeckY + 0.55, 0.16, 'Winch Industri DC 24V', 'fullscale');
+      registerLabel(fullScaleGroup, 1.25, fTopDeckY + 0.58, 0.62, 'Aki Kelautan 12V/24V', 'fullscale');
+      registerLabel(parts.hoistGroup, 0, 0.88, 0, 'Load Cell S-Beam 200 kg', 'fullscale');
+
+      // Shared net label (text updates on mode toggle)
+      parts.netLabelSpan = registerLabel(parts.hoistGroup, 0, -0.25, 0, 'Jaring Miniatur & Tangkapan', 'both');
+    }
+
+    // =========================================================================
+    // 6. BUILD 34 ANIMATED 3D PELAGIC FISH (SWIMMING & ENTERING NET)
+    // =========================================================================
+    function buildAnimatedFishSchool() {
+      const silverBodyMat = new THREE.MeshStandardMaterial({
+        color: '#e2e8f0',
+        emissive: '#0284c7',
+        emissiveIntensity: 0.22,
+        roughness: 0.22,
+        metalness: 0.85
+      });
+
+      const blueStripeMat = new THREE.MeshStandardMaterial({
+        color: '#38bdf8',
+        emissive: '#00e5d0',
+        emissiveIntensity: 0.3,
+        roughness: 0.3,
+        metalness: 0.7
+      });
+
+      for (let i = 0; i < 34; i++) {
+        const fishRoot = new THREE.Group();
+
+        // Streamlined Fish Body (scaled ellipsoid)
+        const bodyGeo = new THREE.SphereGeometry(0.06, 12, 10);
+        bodyGeo.scale(2.4, 0.85, 0.65);
+        const bodyMesh = new THREE.Mesh(bodyGeo, i % 3 === 0 ? blueStripeMat : silverBodyMat);
+        fishRoot.add(bodyMesh);
+
+        // Dorsal Fin
+        const dorsalGeo = new THREE.ConeGeometry(0.032, 0.075, 4);
+        const dorsal = new THREE.Mesh(dorsalGeo, blueStripeMat);
+        dorsal.position.set(0.01, 0.055, 0);
+        dorsal.rotation.z = -0.35;
+        fishRoot.add(dorsal);
+
+        // Articulated Tail Pivot (swishes left-right!)
+        const tailPivot = new THREE.Group();
+        tailPivot.position.set(-0.13, 0, 0);
+        const tailGeo = new THREE.ConeGeometry(0.048, 0.095, 4);
+        tailGeo.rotateZ(Math.PI / 2);
+        const tailMesh = new THREE.Mesh(tailGeo, blueStripeMat);
+        tailMesh.position.x = -0.035;
+        tailPivot.add(tailMesh);
+        fishRoot.add(tailPivot);
+
+        // Random initial position in the ocean around the bagan
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 1.6 + Math.random() * 5.2;
+        const yDepth = -0.6 - Math.random() * 3.1;
+        fishRoot.position.set(Math.cos(angle) * radius, yDepth, Math.sin(angle) * radius);
+
+        const scaleFactor = 0.85 + Math.random() * 0.45;
+        fishRoot.scale.setScalar(scaleFactor);
+        scene.add(fishRoot);
+
+        parts.fishList.push({
+          root: fishRoot,
+          tailPivot: tailPivot,
+          baseScale: scaleFactor,
+          state: 'swimming', // 'swimming' | 'attracted' | 'captured'
+          orbitAngle: angle,
+          orbitRadius: radius,
+          orbitSpeed: (0.35 + Math.random() * 0.45) * (i % 2 === 0 ? 1 : -1),
+          baseY: yDepth,
+          phase: Math.random() * Math.PI * 2,
+          // Local offset inside net pouch when captured
+          netOffset: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.72,
+            -0.25 - Math.random() * 0.25,
+            (Math.random() - 0.5) * 0.72
+          )
+        });
+      }
+
+      // Build dense Teri & Udang Rebon swarm for Full-Scale Sea Bagan mode
+      const teriGroup = new THREE.Group();
+      teriGroup.visible = false;
+      scene.add(teriGroup);
+      parts.teriSwarmGroup = teriGroup;
+
+      const teriMat = new THREE.MeshStandardMaterial({
+        color: '#f1f5f9',
+        emissive: '#38bdf8',
+        emissiveIntensity: 0.35,
+        metalness: 0.85,
+        roughness: 0.2
+      });
+      const rebonMat = new THREE.MeshStandardMaterial({
+        color: '#fda4af',
+        emissive: '#fb7185',
+        emissiveIntensity: 0.25,
+        roughness: 0.4
+      });
+
+      const teriGeo = new THREE.ConeGeometry(0.018, 0.095, 5);
+      teriGeo.rotateZ(Math.PI / 2);
+
+      for (let i = 0; i < 65; i++) {
+        const isRebon = i % 4 === 0;
+        const m = new THREE.Mesh(teriGeo, isRebon ? rebonMat : teriMat);
+        const insideNet = i < 32;
+        teriGroup.add(m);
+        parts.teriParticles.push({
+          mesh: m,
+          insideNet,
+          offset: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.85,
+            -0.25 - Math.random() * 0.32,
+            (Math.random() - 0.5) * 0.85
+          ),
+          orbitRadius: 0.7 + Math.random() * 2.2,
+          orbitAngle: Math.random() * Math.PI * 2,
+          orbitSpeed: (0.7 + Math.random() * 0.8) * (i % 2 === 0 ? 1 : -1),
+          baseY: -0.45 - Math.random() * 1.9,
+          phase: Math.random() * Math.PI * 2
+        });
+      }
+    }
+
+    // =========================================================================
+    // 7. FISH CAPTURE LOGIC & AUTOMATED HOIST STATE MACHINE
+    // =========================================================================
+    function updateCaughtCountAndWeight() {
+      const count = parts.fishList.filter(f => f.state === 'captured').length;
+      SIM_STATE.capturedFishCount = count;
+
+      const addedWeight = count * SIM_STATE.weightPerFish;
+      SIM_STATE.currentFilteredKg = parseFloat((SIM_STATE.tareKg + addedWeight).toFixed(2));
+      updateHudUI();
+
+      // Check if weight reached target threshold while net is down in the sea!
+      if (
+        SIM_STATE.currentFilteredKg >= SIM_STATE.targetKg &&
+        SIM_STATE.hoistProgress <= 0.05 &&
+        SIM_STATE.motorState === 'standby'
+      ) {
+        triggerAutomatedHoist();
+      }
+    }
+
+    function summonFishToNet(countToAttract = 5) {
+      if (SIM_STATE.hoistProgress > 0.15) {
+        showToast('Turunkan jaring ke dalam laut terlebih dahulu agar ikan bisa masuk!', 'info');
+        return;
+      }
+      if (SIM_STATE.motorState === 'estop') {
+        showToast('Lepaskan tombol EMERGENCY STOP terlebih dahulu.', 'danger');
+        return;
+      }
+
+      let attracted = 0;
+      for (const f of parts.fishList) {
+        if (f.state === 'swimming' && attracted < countToAttract) {
+          f.state = 'attracted';
+          attracted++;
+        }
+      }
+      SIM_STATE.fishAttractBoostTimer = 6.0;
+      showToast('Lampu pemikat menarik gerombolan ikan teri & udang rebon mendekati jaring bagan!', 'info');
+    }
+
+    function triggerAutomatedHoist(manualMode = false) {
+      if (
+        SIM_STATE.motorState === 'raising' ||
+        SIM_STATE.motorState === 'estop' ||
+        SIM_STATE.hoistProgress >= 1.0
+      ) return;
+
+      if (manualMode) {
+        SIM_STATE.motorState = 'raising';
+        SIM_STATE.limitSwitchBottom = false;
+        updateHudUI();
+        showToast('Angkat Manual: Motor DC 12V menggulung tali utama mengangkat jaring & ikan!', 'info');
+        return;
+      }
+
+      SIM_STATE.motorState = 'verifying';
+      const badge = document.getElementById('stabilityStatusBadge');
+      badge.innerHTML = '<i class="fas fa-spinner fa-spin text-amber-300"></i> Verifikasi...';
+      badge.className = 'text-amber-300 font-bold';
+      updateHudUI();
+
+      showToast(`Beban ${SIM_STATE.currentFilteredKg.toFixed(2)} kg mencapai target! ESP32 memverifikasi kestabilan...`, 'info');
+
+      setTimeout(() => {
+        if (SIM_STATE.motorState === 'estop') return;
+        badge.innerHTML = '<i class="fas fa-check-circle"></i> Stabil';
+        badge.className = 'text-emerald-400 font-bold';
+
+        SIM_STATE.motorState = 'raising';
+        SIM_STATE.limitSwitchBottom = false;
+        updateHudUI();
+        showToast('Otomatisasi ESP32: Motor winch mengangkat jaring & ikan tangkapan ke atas air!', 'info');
+      }, 1000);
+    }
+
+    function harvestCapturedFish() {
+      const dec = SIM_STATE.scaleMode === 'miniature' ? 2 : 1;
+      const harvestedKg = Math.max(0, SIM_STATE.currentFilteredKg - SIM_STATE.tareKg);
+      if (SIM_STATE.capturedFishCount === 0 || harvestedKg <= 0) {
+        showToast('Belum ada hasil tangkapan di dalam jaring untuk dipanen.', 'info');
+        return;
+      }
+
+      SIM_STATE.totalHarvestedKg = parseFloat((SIM_STATE.totalHarvestedKg + harvestedKg).toFixed(2));
+
+      // Release fish back into the outer sea school
+      parts.fishList.forEach((f) => {
+        if (f.state === 'captured' || f.state === 'attracted') {
+          f.state = 'swimming';
+          const angle = Math.random() * Math.PI * 2;
+          const rad = 3.5 + Math.random() * 4.0;
+          f.orbitAngle = angle;
+          f.orbitRadius = rad;
+          f.baseY = -1.2 - Math.random() * 2.4;
+          f.root.position.set(Math.cos(angle) * rad, f.baseY, Math.sin(angle) * rad);
+        }
+      });
+
+      updateCaughtCountAndWeight();
+      showToast(`Panen berhasil! ${harvestedKg.toFixed(dec)} kg hasil tangkapan telah diambil. Jaring kembali kosong.`, 'success');
+    }
+
+    function lowerNetManual() {
+      if (SIM_STATE.hoistProgress <= 0.0 || SIM_STATE.motorState === 'estop') return;
+      SIM_STATE.motorState = 'lowering';
+      SIM_STATE.limitSwitchTop = false;
+      updateHudUI();
+      showToast('Perintah Operator: Menurunkan jaring kembali ke dalam perairan laut...', 'info');
+    }
+
+    // =========================================================================
+    // 8. ANIMATION UPDATE LOOP (REAL MARINE CURRENTS, WAVES, FISH, HOIST)
+    // =========================================================================
+    let simTime = 0;
+    const _tmpVecA = new THREE.Vector3();
+    const _tmpVecB = new THREE.Vector3();
+    const _tmpVecC = new THREE.Vector3();
+    const _tmpVecD = new THREE.Vector3();
+    const _upVec = new THREE.Vector3(0, 1, 0);
+    const _netCenterWorld = new THREE.Vector3();
+    const _labelProjVec = new THREE.Vector3();
+    const _camOffsetVec = new THREE.Vector3();
+    const _camSpherical = new THREE.Spherical();
+
+    function getActiveOceanParams() {
+      const m = SIM_STATE.liveMarine;
+      if (SIM_STATE.waveMode === 'live' && m) {
+        const waveRad = (m.waveDirectionDeg || 200) * (Math.PI / 180);
+        const curRad = (m.currentDirectionDeg || 120) * (Math.PI / 180);
+        const period = Math.max(2.5, Math.min(14, m.wavePeriodSec || 6.5));
+        // Real swell amplitude mapped cleanly to 3D tank units
+        const visualAmp = Math.max(0.035, Math.min(0.32, 0.04 + (m.waveHeightM || 0.25) * 0.28));
+        const chopAmp = Math.max(0.015, Math.min(0.12, (m.windWaveHeightM || 0.08) * 0.25));
+        const wSpeed = Math.max(1.2, Math.min(4.2, (2 * Math.PI) / period * 2.2));
+        const curVelMs = m.currentVelocityMs || 0.4;
+        return {
+          amp: visualAmp,
+          chopAmp,
+          wSpeed,
+          waveDirX: Math.cos(waveRad),
+          waveDirZ: Math.sin(waveRad),
+          curDirX: Math.cos(curRad),
+          curDirZ: Math.sin(curRad),
+          curVelMs,
+          waveHeightM: m.waveHeightM || 0.25,
+          windWaveHeightM: m.windWaveHeightM || 0.08,
+          wavePeriodSec: period
+        };
+      }
+
+      const waveAmpMap = { calm: 0.035, moderate: 0.11, rough: 0.24 };
+      const waveSpeedMap = { calm: 1.4, moderate: 2.3, rough: 3.4 };
+      const curVelMap = { calm: 0.18, moderate: 0.45, rough: 0.92 };
+      const periodMap = { calm: 8.5, moderate: 6.0, rough: 4.2 };
+      const amp = waveAmpMap[SIM_STATE.waveIntensity] || 0.11;
+      return {
+        amp,
+        chopAmp: amp * 0.4,
+        wSpeed: waveSpeedMap[SIM_STATE.waveIntensity] || 2.3,
+        waveDirX: 0.78,
+        waveDirZ: 0.62,
+        curDirX: 0.85,
+        curDirZ: 0.52,
+        curVelMs: curVelMap[SIM_STATE.waveIntensity] || 0.45,
+        waveHeightM: amp * 2.8,
+        windWaveHeightM: amp * 0.9,
+        wavePeriodSec: periodMap[SIM_STATE.waveIntensity] || 6.0
+      };
+    }
+
+    function updateSimulation(dt) {
+      simTime += dt;
+
+      const ocean = getActiveOceanParams();
+      const { amp, chopAmp, wSpeed, waveDirX, waveDirZ, curDirX, curDirZ, curVelMs } = ocean;
+
+      // 1. Animate 3D Ocean Surface Waves (Directional Swell + Wind Chop + Current Drift)
+      if (parts.waterSurface && parts.waterInitialY) {
+        const pos = parts.waterSurface.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const vx = pos.getX(i);
+          const vz = pos.getZ(i);
+          const kWave = vx * waveDirX + vz * waveDirZ;
+          const kCur = vx * curDirX + vz * curDirZ;
+          const waveY =
+            Math.sin(kWave * 0.95 - simTime * wSpeed) * amp +
+            Math.cos(kCur * 1.65 - simTime * (wSpeed * 1.45 + curVelMs * 1.6)) * chopAmp;
+          pos.setY(i, parts.waterInitialY[i] + waveY);
+        }
+        pos.needsUpdate = true;
+      }
+
+      // Bob perimeter mooring buoys on the live surface wave
+      parts.buoys.forEach((b) => {
+        const kW = b.x * waveDirX + b.z * waveDirZ;
+        const ySurf = Math.sin(kW * 0.95 - simTime * wSpeed) * amp;
+        b.group.position.y = ySurf;
+        b.group.rotation.z = Math.sin(simTime * wSpeed + b.phase) * 0.12;
+        b.group.rotation.x = Math.cos(simTime * wSpeed * 0.8 + b.phase) * 0.10;
+      });
+
+      if (parts.causticDisc) {
+        parts.causticDisc.rotation.z = simTime * 0.08;
+        parts.causticDisc.visible = SIM_STATE.attractantLampOn;
+      }
+
+      if (parts.beaconLedMesh) {
+        const pulse = 0.5 + 0.5 * Math.sin(simTime * 2.4);
+        parts.beaconLedMesh.material.color.setRGB(0.0, 0.55 + 0.35 * pulse, 0.55 + 0.30 * pulse);
+        const s = 0.9 + 0.18 * pulse;
+        parts.beaconLedMesh.scale.set(s, s, s);
+      }
+
+      // 2. Animate Swaying Seaweed & Current-Driven Air Bubbles
+      parts.seaweeds.forEach((sw) => {
+        const currentLean = Math.min(0.42, curVelMs * 0.35);
+        sw.mesh.rotation.z = currentLean * curDirX + Math.sin(simTime * (1.2 + curVelMs * 1.5) + sw.phase) * (0.14 + curVelMs * 0.12);
+        sw.mesh.rotation.x = currentLean * curDirZ * 0.5;
+      });
+
+      parts.bubbles.forEach((b) => {
+        b.mesh.position.y += b.speed * dt;
+        b.mesh.position.x += (curDirX * curVelMs * 0.45 + Math.sin(simTime * 2 + b.phase) * 0.08) * dt;
+        b.mesh.position.z += (curDirZ * curVelMs * 0.45 + Math.cos(simTime * 1.8 + b.phase) * 0.06) * dt;
+        if (b.mesh.position.y > -0.05) {
+          b.mesh.position.y = -4.1;
+          b.mesh.position.x = (Math.random() - 0.5) * 6.5;
+          b.mesh.position.z = (Math.random() - 0.5) * 6.5;
+        }
+      });
+
+      // 3. Hoist State Machine & Motor/Spool Rotation (Calm, realistic mechanical speed!)
+      const hoistRaiseSpeed = 0.052; // ~19s gentle mechanical lift up to deck level
+      const hoistLowerSpeed = 0.062; // ~16s controlled gentle lowering into water
+      if (SIM_STATE.motorState === 'raising') {
+        SIM_STATE.hoistProgress = Math.min(1.0, SIM_STATE.hoistProgress + dt * hoistRaiseSpeed);
+        parts.winchSpool.rotation.x -= dt * 1.85;
+        parts.motorShaft.rotation.x -= dt * 1.85;
+        if (parts.fullWinchSpool) parts.fullWinchSpool.rotation.x -= dt * 1.85;
+        if (parts.fullMotorShaft) parts.fullMotorShaft.rotation.x -= dt * 1.85;
+
+        if (SIM_STATE.hoistProgress >= 1.0) {
+          SIM_STATE.hoistProgress = 1.0;
+          SIM_STATE.motorState = 'stopped_top';
+          SIM_STATE.limitSwitchTop = true;
+          SIM_STATE.limitSwitchBottom = false;
+          updateHudUI();
+          const dec = SIM_STATE.scaleMode === 'miniature' ? 2 : 1;
+          const catchKg = Math.max(0, SIM_STATE.currentFilteredKg - SIM_STATE.tareKg);
+          showToast(`Jaring terangkat penuh di atas dek! Limit Switch Atas aktif (Tangkapan: ${catchKg.toFixed(dec)} kg).`, 'success');
+        }
+      } else if (SIM_STATE.motorState === 'lowering') {
+        SIM_STATE.hoistProgress = Math.max(0.0, SIM_STATE.hoistProgress - dt * hoistLowerSpeed);
+        parts.winchSpool.rotation.x += dt * 2.15;
+        parts.motorShaft.rotation.x += dt * 2.15;
+        if (parts.fullWinchSpool) parts.fullWinchSpool.rotation.x += dt * 2.15;
+        if (parts.fullMotorShaft) parts.fullMotorShaft.rotation.x += dt * 2.15;
+
+        if (SIM_STATE.hoistProgress <= 0.0) {
+          SIM_STATE.hoistProgress = 0.0;
+          SIM_STATE.motorState = 'standby';
+          SIM_STATE.limitSwitchTop = false;
+          SIM_STATE.limitSwitchBottom = true;
+          updateHudUI();
+          showToast('Jaring kembali terendam di laut. Limit Switch Bawah aktif.', 'info');
+        }
+      }
+
+      // Update Limit Switch LEDs & Lever
+      if (SIM_STATE.limitSwitchTop || SIM_STATE.hoistProgress > 0.96) {
+        parts.limitTopLed.material.color.set('#ef4444');
+        parts.limitTopLever.rotation.z = 0.02;
+      } else {
+        parts.limitTopLed.material.color.set('#10b981');
+        parts.limitTopLever.rotation.z = 0.28;
+      }
+
+      if (SIM_STATE.limitSwitchBottom || SIM_STATE.hoistProgress < 0.04) {
+        parts.limitBotLed.material.color.set('#10b981');
+      } else {
+        parts.limitBotLed.material.color.set('#475569');
+      }
+
+      // Position Hoist Group: raises net mouth all the way up right under the deck (y = +2.02)
+      // with smooth mechanical ease-in-out
+      const bottomNetY = -1.45;
+      const topNetY = 2.02;
+      const p = SIM_STATE.hoistProgress;
+      const easedProgress = 0.45 * p + 0.55 * (p * p * (3 - 2 * p));
+      const currentHoistY = bottomNetY + (topNetY - bottomNetY) * easedProgress;
+      const submergence = Math.max(0, 1 - SIM_STATE.hoistProgress * 1.6);
+      const swayMag = submergence * Math.min(0.14, curVelMs * 0.12);
+      const curOffsetX = swayMag * curDirX * (0.65 + 0.35 * Math.sin(simTime * wSpeed * 0.9));
+      const curOffsetZ = swayMag * curDirZ * (0.65 + 0.35 * Math.cos(simTime * wSpeed * 0.8));
+
+      parts.hoistGroup.position.set(curOffsetX, currentHoistY, 0.55 + curOffsetZ);
+
+      // Update Main Vertical Rope from Overhead Pulley to Swivel
+      const pulleyY = SIM_STATE.scaleMode === 'fullscale' ? 4.46 : 4.43;
+      const swivelWorldY = currentHoistY + (SIM_STATE.scaleMode === 'fullscale' ? 1.00 : 0.95);
+      _tmpVecA.set(0, pulleyY, 0.55);
+      _tmpVecB.set(curOffsetX, swivelWorldY, 0.55 + curOffsetZ);
+      const ropeLen = Math.max(0.05, _tmpVecA.distanceTo(_tmpVecB));
+      parts.ropePulleyToLoadCell.scale.set(1, ropeLen, 1);
+      parts.ropePulleyToLoadCell.position.copy(_tmpVecA).add(_tmpVecB).multiplyScalar(0.5);
+      parts.ropePulleyToLoadCell.quaternion.setFromUnitVectors(
+        _upVec,
+        _tmpVecA.sub(_tmpVecB).normalize()
+      );
+
+      // 4. Animate 3D Fish Schooling, Attraction & Capture inside Net!
+      if (SIM_STATE.fishAttractBoostTimer > 0) {
+        SIM_STATE.fishAttractBoostTimer -= dt;
+      }
+
+      const netCenterWorld = _netCenterWorld.set(curOffsetX, currentHoistY - 0.30, 0.55 + curOffsetZ);
+      const netIsSubmerged = SIM_STATE.hoistProgress < 0.12 && SIM_STATE.motorState !== 'raising';
+
+      if (netIsSubmerged && SIM_STATE.attractantLampOn && Math.random() < dt * 0.45) {
+        const freeFish = parts.fishList.find(f => f.state === 'swimming');
+        if (freeFish && SIM_STATE.capturedFishCount < 14) {
+          freeFish.state = 'attracted';
+        }
+      }
+
+      let countChanged = false;
+
+      parts.fishList.forEach((f, idx) => {
+        const tailFreq = f.state === 'captured' && SIM_STATE.hoistProgress > 0.4 ? 18 : 9;
+        f.tailPivot.rotation.y = Math.sin(simTime * tailFreq + f.phase) * 0.48;
+
+        if (f.state === 'captured') {
+          const flutterX = Math.sin(simTime * 3.5 + f.phase) * 0.08;
+          const flutterZ = Math.cos(simTime * 3.2 + f.phase) * 0.08;
+          _tmpVecC.set(
+            netCenterWorld.x + f.netOffset.x + flutterX,
+            netCenterWorld.y + f.netOffset.y + 0.30,
+            netCenterWorld.z + f.netOffset.z + flutterZ
+          );
+          f.root.position.lerp(_tmpVecC, Math.min(1, dt * 8));
+          f.root.rotation.y = Math.sin(simTime * 2.5 + f.phase) * 0.8;
+          f.root.rotation.z = SIM_STATE.hoistProgress > 0.45 ? Math.sin(simTime * 12 + idx) * 0.25 : 0;
+        } else if (f.state === 'attracted') {
+          if (!netIsSubmerged) {
+            f.state = 'swimming';
+            return;
+          }
+          _tmpVecC.set(
+            netCenterWorld.x + f.netOffset.x * 0.5,
+            netCenterWorld.y + 0.1,
+            netCenterWorld.z + f.netOffset.z * 0.5
+          );
+          _tmpVecD.subVectors(_tmpVecC, f.root.position);
+          const dist = _tmpVecD.length();
+
+          if (dist < 0.28) {
+            f.state = 'captured';
+            countChanged = true;
+          } else {
+            _tmpVecD.normalize();
+            f.root.position.addScaledVector(_tmpVecD, dt * 1.45);
+            f.root.lookAt(_tmpVecC);
+            f.root.rotateY(-Math.PI / 2);
+          }
+        } else {
+          f.orbitAngle += f.orbitSpeed * dt * 0.55;
+          const tx = Math.cos(f.orbitAngle) * f.orbitRadius;
+          const tz = Math.sin(f.orbitAngle) * f.orbitRadius;
+          const ty = Math.min(-0.35, f.baseY + Math.sin(simTime * 1.6 + f.phase) * 0.14);
+
+          _tmpVecC.set(tx, ty, tz);
+          f.root.lookAt(_tmpVecC);
+          f.root.rotateY(-Math.PI / 2);
+          f.root.position.lerp(_tmpVecC, Math.min(1, dt * 3));
+        }
+      });
+
+      if (countChanged) {
+        updateCaughtCountAndWeight();
+      }
+
+      // Animate Teri & Rebon swarm when in Full-Scale Sea Bagan mode
+      if (parts.teriSwarmGroup && parts.teriSwarmGroup.visible) {
+        const hasCatch = SIM_STATE.capturedFishCount > 0;
+        parts.teriParticles.forEach((tp) => {
+          if (tp.insideNet && hasCatch) {
+            tp.mesh.visible = true;
+            tp.mesh.position.set(
+              netCenterWorld.x + tp.offset.x + Math.sin(simTime * 4.5 + tp.phase) * 0.05,
+              netCenterWorld.y + tp.offset.y + 0.05 + Math.cos(simTime * 3.5 + tp.phase) * 0.03,
+              netCenterWorld.z + tp.offset.z + Math.cos(simTime * 4.2 + tp.phase) * 0.05
+            );
+            tp.mesh.rotation.y = simTime * 2.5 + tp.phase;
+          } else {
+            tp.mesh.visible = true;
+            tp.orbitAngle += tp.orbitSpeed * dt * 0.7;
+            tp.mesh.position.set(
+              Math.cos(tp.orbitAngle) * tp.orbitRadius,
+              tp.baseY + Math.sin(simTime * 2.0 + tp.phase) * 0.1,
+              Math.sin(tp.orbitAngle) * tp.orbitRadius + 0.55
+            );
+            tp.mesh.rotation.y = -tp.orbitAngle + (tp.orbitSpeed > 0 ? 0 : Math.PI);
+          }
+        });
+      }
+
+      // 5. Simulate Load Cell Raw Signal from Real Ocean Current & Wave Hydrodynamics + True MA-15 ESP32 Filter
+      // Drag force fluctuation from real ocean current (F_d = 0.5 * rho * Cd * A * v^2 / g) + wave heave + wind chop
+      const dragKgFull = (0.5 * 1025 * 1.1 * 0.42 * curVelMs * curVelMs) / 9.80665;
+      const waveHeaveKgFull = ocean.waveHeightM * 4.2 + ocean.windWaveHeightM * 2.4;
+      const totalDisturbanceFullKg = Math.max(0.4, dragKgFull * 0.45 + waveHeaveKgFull);
+      const scaleFactor = SIM_STATE.scaleMode === 'miniature' ? (2.0 / 85.0) : 1.0;
+
+      // Wave frequency follows real wave period (2*PI/T) + vortex shedding turbulence from current
+      const omegaWave = (2 * Math.PI) / ocean.wavePeriodSec;
+      const vortexFreq = 1.8 + curVelMs * 3.4;
+      const waveNoise =
+        (Math.sin(simTime * omegaWave * 3.2) * (totalDisturbanceFullKg * 0.65) +
+         Math.cos(simTime * vortexFreq * 1.9) * (dragKgFull * 0.45 + ocean.windWaveHeightM * 1.8) +
+         Math.sin(simTime * 5.7) * (totalDisturbanceFullKg * 0.18)) *
+        scaleFactor;
+
+      SIM_STATE.currentRawKg = Math.max(0, SIM_STATE.currentFilteredKg + waveNoise);
+
+      // Fixed-rate ~16 Hz ESP32 Moving Average (MA-15) sampling buffer
+      SIM_STATE.sampleAccumSec += dt;
+      if (SIM_STATE.sampleAccumSec >= 0.06) {
+        SIM_STATE.sampleAccumSec = 0;
+        SIM_STATE.rawSampleBuffer.push(SIM_STATE.currentRawKg);
+        if (SIM_STATE.rawSampleBuffer.length > 15) {
+          SIM_STATE.rawSampleBuffer.shift();
+        }
+        const sum = SIM_STATE.rawSampleBuffer.reduce((acc, v) => acc + v, 0);
+        SIM_STATE.filteredDisplayKg = sum / SIM_STATE.rawSampleBuffer.length;
+
+        SIM_STATE.waveform.push({
+          raw: SIM_STATE.currentRawKg,
+          filtered: SIM_STATE.filteredDisplayKg
+        });
+        if (SIM_STATE.waveform.length > 75) SIM_STATE.waveform.shift();
+      }
+
+      renderMiniOscilloscope();
+    }
+
+    function renderMiniOscilloscope() {
+      const canvas = document.getElementById('miniWaveCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const maxScale = SIM_STATE.scaleMode === 'miniature' ? 5.0 : 160.0;
+      const getY = (val) => h - 5 - (Math.min(maxScale, Math.max(0, val)) / maxScale) * (h - 10);
+
+      // Target Threshold Dashed Line
+      const targetY = getY(SIM_STATE.targetKg);
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, targetY);
+      ctx.lineTo(w, targetY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const pts = SIM_STATE.waveform;
+      const stepX = w / (pts.length - 1);
+
+      // Raw Noisy Wave + Ocean Current Signal
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 1.15;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = i * stepX;
+        const y = getY(p.raw);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Filtered MA-15 Signal (Cyan Neon)
+      ctx.strokeStyle = '#00e5d0';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const x = i * stepX;
+        const y = getY(p.filtered);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    // =========================================================================
+    // 9. 3D FLOATING LABELS PROJECTION
+    // =========================================================================
+    function update3DLabels() {
+      const layer = document.getElementById('labels-layer');
+      if (!SIM_STATE.showLabels || !SIM_STATE.hudVisible) {
+        layer.style.display = 'none';
+        return;
+      }
+      layer.style.display = 'block';
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const v = _labelProjVec;
+
+      parts.anchors.forEach(({ obj, el, mode }) => {
+        if (mode && mode !== 'both' && mode !== SIM_STATE.scaleMode) {
+          el.style.display = 'none';
+          return;
+        }
+        el.style.display = 'block';
+        obj.getWorldPosition(v);
+        v.project(camera);
+
+        if (v.z > 1) {
+          el.style.opacity = '0';
+          return;
+        }
+        el.style.opacity = '1';
+        el.style.left = `${(v.x * 0.5 + 0.5) * w}px`;
+        el.style.top = `${(-(v.y * 0.5) + 0.5) * h}px`;
+      });
+    }
+
+    // =========================================================================
+    // 10. CAMERA PRESETS & 360° D-PAD NAVIGATION
+    // =========================================================================
+    function setCameraPreset(viewName) {
+      const presets = {
+        full:       { pos: new THREE.Vector3(7.4, 3.8, 8.2),  target: new THREE.Vector3(0, 1.4, 0) },
+        underwater: { pos: new THREE.Vector3(3.6, -1.3, 4.2), target: new THREE.Vector3(0, -1.4, 0.4) },
+        deck:       { pos: new THREE.Vector3(0.0, 4.35, 3.25), target: new THREE.Vector3(0.05, 2.55, 0.35) },
+        roof:       { pos: new THREE.Vector3(3.4, 5.2, 3.8),  target: new THREE.Vector3(0, 4.6, 0.2) },
+        side:       { pos: new THREE.Vector3(8.8, 1.6, 0.0),  target: new THREE.Vector3(0, 1.2, 0) }
+      };
+
+      const p = presets[viewName] || presets.full;
+      cameraTween.targetPos.copy(p.pos);
+      cameraTween.targetLookAt.copy(p.target);
+      cameraTween.active = true;
+
+      document.querySelectorAll('.cam-preset-btn').forEach((btn) => {
+        if (btn.dataset.view === viewName) {
+          btn.className = 'cam-preset-btn px-2.5 py-1.5 rounded-xl bg-teal-400 text-slate-950 font-extrabold text-xs whitespace-nowrap transition';
+        } else {
+          btn.className = 'cam-preset-btn px-2.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 font-semibold text-xs whitespace-nowrap border border-slate-700 transition';
+        }
+      });
+    }
+
+    function applyCameraStep(dt) {
+      const rotSpeed = 1.65 * dt;
+      const zoomFactor = 1 + 1.45 * dt;
+      const offset = _camOffsetVec.subVectors(camera.position, controls.target);
+      const spherical = _camSpherical.setFromVector3(offset);
+      let moved = false;
+
+      if (dpadHold.left) { spherical.theta -= rotSpeed; moved = true; }
+      if (dpadHold.right) { spherical.theta += rotSpeed; moved = true; }
+      if (dpadHold.up) { spherical.phi = Math.max(0.12, spherical.phi - rotSpeed); moved = true; }
+      if (dpadHold.down) { spherical.phi = Math.min(Math.PI * 0.90, spherical.phi + rotSpeed); moved = true; }
+      if (dpadHold.zoomIn) { spherical.radius = Math.max(controls.minDistance, spherical.radius / zoomFactor); moved = true; }
+      if (dpadHold.zoomOut) { spherical.radius = Math.min(controls.maxDistance, spherical.radius * zoomFactor); moved = true; }
+
+      if (moved) {
+        cameraTween.active = false;
+        offset.setFromSpherical(spherical);
+        camera.position.copy(controls.target).add(offset);
+        camera.lookAt(controls.target);
+      }
+
+      if (cameraTween.active) {
+        camera.position.lerp(cameraTween.targetPos, Math.min(1, dt * 5));
+        controls.target.lerp(cameraTween.targetLookAt, Math.min(1, dt * 5));
+        if (
+          camera.position.distanceTo(cameraTween.targetPos) < 0.03 &&
+          controls.target.distanceTo(cameraTween.targetLookAt) < 0.03
+        ) {
+          cameraTween.active = false;
+        }
+      }
+    }
+
+    function bindHoldBtn(id, key) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const down = (e) => { e.preventDefault(); dpadHold[key] = true; };
+      const up = () => { dpadHold[key] = false; };
+      el.addEventListener('mousedown', down);
+      el.addEventListener('touchstart', down, { passive: false });
+      window.addEventListener('mouseup', up);
+      window.addEventListener('touchend', up);
+    }
+
+    // =========================================================================
+    // 11. UI UPDATES & EVENT LISTENERS
+    // =========================================================================
+    function showToast(msg, type = 'info') {
+      const banner = document.getElementById('toastBanner');
+      const inner = document.getElementById('toastInner');
+      const icon = document.getElementById('toastIcon');
+      document.getElementById('toastMessage').textContent = msg;
+
+      if (type === 'danger') {
+        inner.style.borderColor = '#ef4444';
+        icon.className = 'fas fa-exclamation-triangle text-red-400';
+      } else if (type === 'success') {
+        inner.style.borderColor = '#10b981';
+        icon.className = 'fas fa-check-circle text-emerald-400';
+      } else {
+        inner.style.borderColor = '#00e5d0';
+        icon.className = 'fas fa-info-circle text-teal-300';
+      }
+
+      banner.style.opacity = '1';
+      banner.style.transform = 'translate(-50%, 0)';
+      clearTimeout(banner._timer);
+      banner._timer = setTimeout(() => {
+        banner.style.opacity = '0';
+        banner.style.transform = 'translate(-50%, -8px)';
+      }, 3600);
+    }
+
+    function updateHudUI() {
+      const dec = SIM_STATE.scaleMode === 'miniature' ? 2 : 1;
+      const kg = SIM_STATE.currentFilteredKg;
+      const newton = kg * 9.80665;
+      const pct = Math.min(100, Math.round((kg / SIM_STATE.targetKg) * 100));
+
+      document.getElementById('loadKgDisplay').textContent = `${kg.toFixed(dec)} kg`;
+      document.getElementById('loadNewtonDisplay').textContent = `${newton.toFixed(1)} N (Tara: ${SIM_STATE.tareKg.toFixed(dec)} kg)`;
+      document.getElementById('targetThresholdDisplay').textContent = `${SIM_STATE.targetKg.toFixed(dec)} kg`;
+      document.getElementById('loadProgressBar').style.width = `${pct}%`;
+
+      const catchKg = Math.max(0, kg - SIM_STATE.tareKg);
+      document.getElementById('caughtFishDisplay').textContent = `${catchKg.toFixed(dec)} kg`;
+      document.getElementById('totalHarvestedText').textContent = `Total Panen: ${SIM_STATE.totalHarvestedKg.toFixed(dec)} kg`;
+
+      const motorEl = document.getElementById('statusMotorText');
+      if (SIM_STATE.motorState === 'raising') {
+        motorEl.textContent = 'Menggulung';
+        motorEl.className = 'text-[10.5px] font-bold text-teal-300 block';
+      } else if (SIM_STATE.motorState === 'lowering') {
+        motorEl.textContent = 'Mengulur';
+        motorEl.className = 'text-[10.5px] font-bold text-sky-300 block';
+      } else if (SIM_STATE.motorState === 'estop') {
+        motorEl.textContent = 'E-STOP!';
+        motorEl.className = 'text-[10.5px] font-bold text-red-400 block';
+      } else if (SIM_STATE.motorState === 'stopped_top') {
+        motorEl.textContent = 'Stop (Atas)';
+        motorEl.className = 'text-[10.5px] font-bold text-emerald-400 block';
+      } else {
+        motorEl.textContent = 'Standby';
+        motorEl.className = 'text-[10.5px] font-bold text-sky-300 block';
+      }
+
+      const ltEl = document.getElementById('statusLimitTopText');
+      ltEl.textContent = SIM_STATE.limitSwitchTop ? 'CUT-OFF' : 'Terbuka';
+      ltEl.className = SIM_STATE.limitSwitchTop
+        ? 'text-[10.5px] font-bold text-red-400 block'
+        : 'text-[10.5px] font-bold text-slate-300 block';
+
+      const lbEl = document.getElementById('statusLimitBotText');
+      lbEl.textContent = SIM_STATE.limitSwitchBottom ? 'Aktif' : 'Terbuka';
+      lbEl.className = SIM_STATE.limitSwitchBottom
+        ? 'text-[10.5px] font-bold text-emerald-400 block'
+        : 'text-[10.5px] font-bold text-slate-400 block';
+
+      const estopBtn = document.getElementById('btnEStop');
+      const estopText = document.getElementById('estopBtnText');
+      if (SIM_STATE.motorState === 'estop') {
+        estopBtn.className = 'sim-btn w-full py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 border border-emerald-200 text-slate-950 font-black text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg';
+        estopText.textContent = 'RESET EMERGENCY STOP';
+      } else {
+        estopBtn.className = 'sim-btn w-full py-2 px-3 rounded-xl bg-red-600 hover:bg-red-500 border border-red-300/60 text-white font-black text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg shadow-red-600/30';
+        estopText.textContent = 'EMERGENCY STOP (E-STOP)';
+      }
+
+      const busy = SIM_STATE.motorState === 'raising' || SIM_STATE.motorState === 'lowering' || SIM_STATE.motorState === 'verifying';
+      const estop = SIM_STATE.motorState === 'estop';
+      document.getElementById('btnCallFish').disabled = busy || estop || SIM_STATE.hoistProgress > 0.15;
+      document.getElementById('btnManualHoist').disabled = busy || estop || SIM_STATE.hoistProgress >= 1.0;
+      document.getElementById('btnHarvestFish').disabled = busy || SIM_STATE.capturedFishCount === 0;
+      document.getElementById('btnManualLower').disabled = busy || estop || SIM_STATE.hoistProgress <= 0.0;
+    }
+
+    function initEvents() {
+      // Target Threshold Slider
+      const slider = document.getElementById('sliderTargetThreshold');
+      slider.addEventListener('input', (e) => {
+        SIM_STATE.targetKg = parseFloat(e.target.value);
+        updateHudUI();
+      });
+
+      // Day / Night & Attractant Lamp Toggle
+      document.getElementById('btnToggleDayNight').addEventListener('click', () => {
+        SIM_STATE.isNightMode = !SIM_STATE.isNightMode;
+        SIM_STATE.attractantLampOn = SIM_STATE.isNightMode;
+
+        const icon = document.getElementById('dayNightIcon');
+        const txt = document.getElementById('dayNightText');
+
+        if (SIM_STATE.isNightMode) {
+          scene.background.set('#041022');
+          scene.fog.color.set('#041022');
+          if (parts.skyMat) {
+            parts.skyMat.uniforms.uTopColor.value.set('#020817');
+            parts.skyMat.uniforms.uMidColor.value.set('#072247');
+            parts.skyMat.uniforms.uHorizonColor.value.set('#0c4a6e');
+          }
+          parts.ambientLight.intensity = 0.78;
+          parts.sunLight.intensity = 1.05;
+          parts.sunLight.color.set('#e0f2fe');
+          if (parts.hangLanternLight) parts.hangLanternLight.intensity = 1.85;
+          if (parts.miniLanternLight) parts.miniLanternLight.intensity = 1.35;
+          parts.attractantLight.intensity = 2.0;
+          parts.attractantConeMesh.visible = true;
+          parts.attractantBulbMesh.material.color.set('#00e5d0');
+          icon.className = 'fas fa-moon text-amber-300';
+          txt.textContent = 'Mode Malam (Lampu Aktif)';
+          showToast('Mode Malam Bagan aktif: Lampu pemikat ikan & penerangan dek menyala!', 'info');
+        } else {
+          scene.background.set('#38bdf8');
+          scene.fog.color.set('#7dd3fc');
+          if (parts.skyMat) {
+            parts.skyMat.uniforms.uTopColor.value.set('#0284c7');
+            parts.skyMat.uniforms.uMidColor.value.set('#38bdf8');
+            parts.skyMat.uniforms.uHorizonColor.value.set('#bae6fd');
+          }
+          parts.ambientLight.intensity = 1.35;
+          parts.sunLight.intensity = 1.55;
+          parts.sunLight.color.set('#fffbeb');
+          if (parts.hangLanternLight) parts.hangLanternLight.intensity = 0.35;
+          if (parts.miniLanternLight) parts.miniLanternLight.intensity = 0.25;
+          parts.attractantLight.intensity = 0.45;
+          parts.attractantConeMesh.visible = false;
+          parts.attractantBulbMesh.material.color.set('#64748b');
+          icon.className = 'fas fa-sun text-yellow-300';
+          txt.textContent = 'Mode Siang Cerah';
+          showToast('Mode Siang Cerah aktif.', 'info');
+        }
+      });
+
+      // Scale Mode Toggle (Miniatur 2.00 kg vs Bagan Laut 85.0 kg)
+      document.getElementById('btnToggleScaleMode').addEventListener('click', () => {
+        if (SIM_STATE.motorState === 'raising' || SIM_STATE.motorState === 'lowering') return;
+
+        if (SIM_STATE.scaleMode === 'miniature') {
+          SIM_STATE.scaleMode = 'fullscale';
+          SIM_STATE.tareKg = 20.0;
+          SIM_STATE.weightPerFish = 8.5;
+          slider.min = '40';
+          slider.max = '140';
+          slider.step = '5';
+          slider.value = '85';
+          SIM_STATE.targetKg = 85.0;
+          document.getElementById('scaleModeText').textContent = 'Skala: Laut Nyata (85 kg)';
+          document.getElementById('simHeaderSubtitle').textContent =
+            'Bagan Tancap Laut Nyata: Tiang Bambu + Atap Seng + Panel IP65 + Winch 24V';
+
+          parts.miniatureGroup.visible = false;
+          parts.fullScaleGroup.visible = true;
+          parts.sBeamInlineGroup.visible = true;
+          parts.hoistGroup.scale.set(1.14, 1.08, 1.14);
+          if (parts.teriSwarmGroup) parts.teriSwarmGroup.visible = true;
+          parts.fishList.forEach((f) => f.root.scale.setScalar(f.baseScale * 0.55));
+          if (parts.netLabelSpan) parts.netLabelSpan.textContent = 'Jaring Waring Teri & Rebon';
+
+          showToast('Beralih ke Bagan Tancap Laut Nyata (Tiang Bambu, Atap Seng, Load Cell S-Beam 200 kg, Tara 20 kg).', 'info');
+        } else {
+          SIM_STATE.scaleMode = 'miniature';
+          SIM_STATE.tareKg = 0.35;
+          SIM_STATE.weightPerFish = 0.22;
+          slider.min = '1.0';
+          slider.max = '4.5';
+          slider.step = '0.25';
+          slider.value = '2.0';
+          SIM_STATE.targetKg = 2.00;
+          document.getElementById('scaleModeText').textContent = 'Skala: Miniatur (2.0 kg)';
+          document.getElementById('simHeaderSubtitle').textContent =
+            'Prototipe Miniatur: Rangka Kayu + Atap Kardus + Load Cell 5 kg + Motor DC';
+
+          parts.miniatureGroup.visible = true;
+          parts.fullScaleGroup.visible = false;
+          parts.sBeamInlineGroup.visible = false;
+          parts.hoistGroup.scale.set(1, 1, 1);
+          if (parts.teriSwarmGroup) parts.teriSwarmGroup.visible = false;
+          parts.fishList.forEach((f) => f.root.scale.setScalar(f.baseScale));
+          if (parts.netLabelSpan) parts.netLabelSpan.textContent = 'Jaring Miniatur & Tangkapan';
+
+          showToast('Beralih ke Skala Miniatur Prototipe (Rangka Kayu, Atap Kardus, Load Cell 5 kg, Tara 0.35 kg).', 'info');
+        }
+        updateCaughtCountAndWeight();
+        update3DLabels();
+      });
+
+      // Sync Wave Buffer when switching scale
+      const syncWaveBuffer = () => {
+        SIM_STATE.rawSampleBuffer = new Array(15).fill(SIM_STATE.currentFilteredKg);
+        SIM_STATE.filteredDisplayKg = SIM_STATE.currentFilteredKg;
+        SIM_STATE.waveform = new Array(75).fill(0).map(() => ({
+          raw: SIM_STATE.currentFilteredKg,
+          filtered: SIM_STATE.currentFilteredKg
+        }));
+      };
+      document.getElementById('btnToggleScaleMode').addEventListener('click', syncWaveBuffer);
+
+      const STATION_COORDS = {
+        karangantu: { label: 'Teluk Banten · Karangantu, Serang', lat: -5.92, lon: 106.16 },
+        anyer: { label: 'Selat Sunda · Anyer, Banten', lat: -6.08, lon: 105.83 },
+        muara_angke: { label: 'Teluk Jakarta · Muara Angke', lat: -5.95, lon: 106.75 },
+        indramayu: { label: 'Laut Jawa · Eretan, Indramayu', lat: -6.18, lon: 108.35 }
+      };
+
+      function degToCompassId(deg) {
+        const dirs = ['Utara', 'Timur Laut', 'Timur', 'Tenggara', 'Selatan', 'Barat Daya', 'Barat', 'Barat Laut'];
+        const idx = Math.round((((deg % 360) + 360) % 360) / 45) % 8;
+        return dirs[idx];
+      }
+
+      function applyMarinePayload(data, showSuccessToast = false) {
+        SIM_STATE.waveMode = 'live';
+        SIM_STATE.liveMarine = data;
+        SIM_STATE.marineRegion = data.region;
+
+        const selEl = document.getElementById('selectMarineRegion');
+        if (selEl && data.region && selEl.value !== data.region) {
+          selEl.value = data.region;
+        }
+
+        const velMs = Number(data.currentVelocityMs || 0);
+        const velKmh = Number(data.currentVelocityKmh || velMs * 3.6);
+        const waveH = Number(data.waveHeightM || 0);
+        const waveP = Number(data.wavePeriodSec || 6.5);
+        const dirDeg = Math.round(Number(data.currentDirectionDeg || 0));
+        const sst = Number(data.seaSurfaceTempC || 29.8);
+
+        document.getElementById('marineCurrentVal').textContent = `${velMs.toFixed(2)} m/s (${velKmh.toFixed(1)} km/j)`;
+        document.getElementById('marineDirVal').textContent = `${dirDeg}° (${degToCompassId(dirDeg)})`;
+        document.getElementById('marineWaveVal').textContent = `${waveH.toFixed(2)} m · ${waveP.toFixed(1)} s`;
+        document.getElementById('marineTempVal').textContent = `${sst.toFixed(1)}°C`;
+
+        const obsMatch = String(data.observedAt || '').match(/T(\d{2}:\d{2})/);
+        document.getElementById('marineObservedVal').textContent = obsMatch ? `${obsMatch[1]} WIB` : 'Live';
+
+        const stateIdMap = { calm: 'Tenang (Real)', moderate: 'Sedang (Real)', rough: 'Berombak (Real)' };
+        document.getElementById('waveLabelText').textContent = stateIdMap[data.seaState] || 'Live Arus';
+
+        if (showSuccessToast) {
+          showToast(`${data.stationLabel}: Arus ${velMs.toFixed(2)} m/s (${dirDeg}°), Ombak ${waveH.toFixed(2)} m · ${waveP.toFixed(1)} s, SST ${sst.toFixed(1)}°C.`, 'success');
+        }
+      }
+
+      async function fetchWithTimeout(url, ms = 5000) {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+        try {
+          return await fetch(url, ctrl ? { signal: ctrl.signal } : {});
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }
+
+      async function fetchOpenMeteoDirect(regionKey) {
+        const st = STATION_COORDS[regionKey] || STATION_COORDS.karangantu;
+        const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${st.lat}&longitude=${st.lon}&current=wave_height,wave_direction,wave_period,ocean_current_velocity,ocean_current_direction,sea_surface_temperature,wind_wave_height,swell_wave_height&timezone=Asia%2FJakarta`;
+        const res = await fetchWithTimeout(url, 6000);
+        if (!res.ok) throw new Error('Open-Meteo HTTP ' + res.status);
+        const raw = await res.json();
+        const cur = raw.current || {};
+        const waveHeightM = typeof cur.wave_height === 'number' ? cur.wave_height : 0.25;
+        const currentVelocityKmh = typeof cur.ocean_current_velocity === 'number' ? cur.ocean_current_velocity : 1.1;
+        const currentVelocityMs = parseFloat((currentVelocityKmh / 3.6).toFixed(2));
+        const seaState =
+          waveHeightM >= 0.7 || currentVelocityMs >= 0.85
+            ? 'rough'
+            : waveHeightM < 0.25 && currentVelocityMs < 0.35
+            ? 'calm'
+            : 'moderate';
+        return {
+          region: regionKey,
+          stationLabel: st.label,
+          observedAt: cur.time || new Date().toISOString(),
+          waveHeightM,
+          waveDirectionDeg: typeof cur.wave_direction === 'number' ? cur.wave_direction : 180,
+          wavePeriodSec: typeof cur.wave_period === 'number' && cur.wave_period > 0 ? cur.wave_period : 6.5,
+          windWaveHeightM: typeof cur.wind_wave_height === 'number' ? cur.wind_wave_height : waveHeightM * 0.35,
+          currentVelocityKmh,
+          currentVelocityMs,
+          currentDirectionDeg: typeof cur.ocean_current_direction === 'number' ? cur.ocean_current_direction : 120,
+          seaSurfaceTempC: typeof cur.sea_surface_temperature === 'number' ? cur.sea_surface_temperature : 29.8,
+          seaState
+        };
+      }
+
+      let activeMarineReqId = 0;
+
+      async function fetchMarineConditions(regionKey = SIM_STATE.marineRegion, forceRefresh = false, notifyOnSwitch = false) {
+        const reqId = ++activeMarineReqId;
+        const icon = document.getElementById('refreshMarineIcon');
+        const label = document.getElementById('waveLabelText');
+
+        // 1. Check browser sessionStorage cache first for instant display (<1ms)
+        if (!forceRefresh) {
+          try {
+            const cachedStr = sessionStorage.getItem(`baganova_marine_${regionKey}`);
+            if (cachedStr) {
+              const parsed = JSON.parse(cachedStr);
+              if (parsed?.data && Date.now() - parsed.savedAt < 300000) {
+                applyMarinePayload(parsed.data, notifyOnSwitch);
+                return;
+              }
+            }
+          } catch (_e) {}
+        }
+
+        if (icon) icon.classList.add('fa-spin');
+        if (label) label.textContent = forceRefresh ? 'Memperbarui...' : 'Mengambil Data...';
+
+        try {
+          // Reuse head prefetch promise for initial load instead of firing a duplicate call
+          if (!forceRefresh && window._earlyMarinePromise) {
+            const earlyData = await window._earlyMarinePromise;
+            window._earlyMarinePromise = null;
+            if (reqId !== activeMarineReqId) return;
+            if (earlyData) {
+              const targetData = earlyData.stations && earlyData.stations[regionKey]
+                ? earlyData.stations[regionKey]
+                : (earlyData.region === regionKey ? earlyData : null);
+              if (targetData) {
+                applyMarinePayload(targetData, notifyOnSwitch);
+                return;
+              }
+            }
+          }
+
+          const qs = new URLSearchParams({ region: regionKey, all: '1' });
+          if (forceRefresh) qs.set('refresh', '1');
+          const res = await fetchWithTimeout(`/api/marine-conditions?${qs.toString()}`, 5000);
+          if (!res.ok) throw new Error('Proxy HTTP ' + res.status);
+          const data = await res.json();
+          if (reqId !== activeMarineReqId) return;
+
+          if (data?.stations) {
+            Object.entries(data.stations).forEach(([k, stData]) => {
+              try {
+                sessionStorage.setItem(`baganova_marine_${k}`, JSON.stringify({ savedAt: Date.now(), data: stData }));
+              } catch (_e) {}
+            });
+          } else {
+            try {
+              sessionStorage.setItem(`baganova_marine_${regionKey}`, JSON.stringify({ savedAt: Date.now(), data }));
+            } catch (_e) {}
+          }
+
+          const selectedPayload = data?.stations?.[regionKey] || data;
+          applyMarinePayload(selectedPayload, forceRefresh || notifyOnSwitch);
+        } catch (_proxyErr) {
+          try {
+            const directData = await fetchOpenMeteoDirect(regionKey);
+            if (reqId !== activeMarineReqId) return;
+            try {
+              sessionStorage.setItem(`baganova_marine_${regionKey}`, JSON.stringify({ savedAt: Date.now(), data: directData }));
+            } catch (_e) {}
+            applyMarinePayload(directData, forceRefresh || notifyOnSwitch);
+          } catch (_directErr) {
+            if (reqId !== activeMarineReqId) return;
+            if (label && !SIM_STATE.liveMarine) label.textContent = 'Koneksi Gagal';
+            showToast('Gagal mengambil data arus laut Open-Meteo. Tekan tombol Refresh untuk mencoba lagi.', 'info');
+          }
+        } finally {
+          if (icon && reqId === activeMarineReqId) icon.classList.remove('fa-spin');
+        }
+      }
+
+      document.getElementById('btnRefreshMarine').addEventListener('click', () => {
+        void fetchMarineConditions(SIM_STATE.marineRegion, true, true);
+      });
+
+      document.getElementById('selectMarineRegion').addEventListener('change', (e) => {
+        SIM_STATE.userSelectedRegion = true;
+        SIM_STATE.marineRegion = e.target.value;
+        void fetchMarineConditions(SIM_STATE.marineRegion, false, true);
+      });
+
+      window.addEventListener('message', (ev) => {
+        if (ev?.data?.type === 'BAGANOVA_MARINE_DATA' && ev.data.data) {
+          // Only accept parent dashboard sync if user has not manually chosen a different station in 3D view
+          if (!SIM_STATE.userSelectedRegion || ev.data.data.region === SIM_STATE.marineRegion) {
+            applyMarinePayload(ev.data.data, false);
+          }
+        }
+      });
+
+      // Expose starter & helper
+      window._applyMarinePayload = applyMarinePayload;
+      window._fetchMarineOnStart = () => fetchMarineConditions(SIM_STATE.marineRegion, false, false);
+
+      // Action Buttons
+      document.getElementById('btnCallFish').addEventListener('click', () => summonFishToNet(5));
+      document.getElementById('btnManualHoist').addEventListener('click', () => triggerAutomatedHoist(true));
+      document.getElementById('btnHarvestFish').addEventListener('click', harvestCapturedFish);
+      document.getElementById('btnManualLower').addEventListener('click', lowerNetManual);
+
+      document.getElementById('btnEStop').addEventListener('click', () => {
+        if (SIM_STATE.motorState === 'estop') {
+          SIM_STATE.motorState = SIM_STATE.hoistProgress >= 0.99 ? 'stopped_top' : 'standby';
+          showToast('Emergency Stop di-reset. Sistem kembali siap.', 'success');
+        } else {
+          SIM_STATE.motorState = 'estop';
+          showToast('EMERGENCY STOP DIAKTIFKAN! Motor DC dihentikan seketika.', 'danger');
+        }
+        updateHudUI();
+      });
+
+      // Labels & HUD Visibility
+      document.getElementById('btnToggleLabels').addEventListener('click', () => {
+        SIM_STATE.showLabels = !SIM_STATE.showLabels;
+      });
+
+      document.getElementById('btnToggleHud').addEventListener('click', () => {
+        SIM_STATE.hudVisible = !SIM_STATE.hudVisible;
+        const left = document.getElementById('leftHudPanel');
+        const bottom = document.getElementById('bottomCameraBar');
+        const icon = document.getElementById('hudEyeIcon');
+        const txt = document.getElementById('hudToggleText');
+
+        left.style.opacity = SIM_STATE.hudVisible ? '1' : '0';
+        left.style.pointerEvents = SIM_STATE.hudVisible ? 'auto' : 'none';
+        bottom.style.opacity = SIM_STATE.hudVisible ? '1' : '0';
+        icon.className = SIM_STATE.hudVisible ? 'fas fa-eye-slash' : 'fas fa-eye';
+        txt.textContent = SIM_STATE.hudVisible ? 'Panel' : 'Tampilkan';
+      });
+
+      // Camera View Presets & D-Pad
+      document.querySelectorAll('.cam-preset-btn').forEach((btn) => {
+        btn.addEventListener('click', () => setCameraPreset(btn.dataset.view));
+      });
+
+      bindHoldBtn('camUpBtn', 'up');
+      bindHoldBtn('camDownBtn', 'down');
+      bindHoldBtn('camLeftBtn', 'left');
+      bindHoldBtn('camRightBtn', 'right');
+      bindHoldBtn('camZoomInBtn', 'zoomIn');
+      bindHoldBtn('camZoomOutBtn', 'zoomOut');
+
+      document.getElementById('camResetBtn').addEventListener('click', () => setCameraPreset('full'));
+
+      document.getElementById('camAutoRotateBtn').addEventListener('click', (e) => {
+        SIM_STATE.autoRotate = !SIM_STATE.autoRotate;
+        controls.autoRotate = SIM_STATE.autoRotate;
+        controls.autoRotateSpeed = 1.4;
+        e.currentTarget.classList.toggle('border-teal-400', SIM_STATE.autoRotate);
+        e.currentTarget.classList.toggle('text-teal-300', SIM_STATE.autoRotate);
+      });
+
+      // Keyboard Arrows & WASD
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') dpadHold.up = true;
+        if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') dpadHold.down = true;
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') dpadHold.left = true;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') dpadHold.right = true;
+        if (e.key === '+' || e.key === '=') dpadHold.zoomIn = true;
+        if (e.key === '-' || e.key === '_') dpadHold.zoomOut = true;
+        if (e.key === 'r' || e.key === 'R') setCameraPreset('full');
+      });
+      window.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') dpadHold.up = false;
+        if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') dpadHold.down = false;
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') dpadHold.left = false;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') dpadHold.right = false;
+        if (e.key === '+' || e.key === '=') dpadHold.zoomIn = false;
+        if (e.key === '-' || e.key === '_') dpadHold.zoomOut = false;
+      });
+
+      // Responsive Window Resize
+      window.addEventListener('resize', () => {
+        const container = document.getElementById('canvas-container');
+        if (!container || !renderer || !camera) return;
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      });
+    }
+
+    // =========================================================================
+    // 12. MAIN RENDER LOOP
+    // =========================================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.1);
+
+      applyCameraStep(dt);
+      controls.update();
+
+      updateSimulation(dt);
+      update3DLabels();
+
+      renderer.render(scene, camera);
+    }
+
+    // Boot Three.js immediately when DOM is ready without waiting for external fonts/CSS
+    let baganBooted = false;
+    function bootBagan3D() {
+      if (baganBooted) return;
+      baganBooted = true;
+      initScene();
+      buildMarineEnvironment();
+      buildBaganovaPrototype();
+      buildAnimatedFishSchool();
+      initEvents();
+      updateHudUI();
+      if (window._prefetchedMarine && window._applyMarinePayload) {
+        window._applyMarinePayload(window._prefetchedMarine, false);
+      }
+      if (window._fetchMarineOnStart) {
+        void window._fetchMarineOnStart();
+      }
+      animate();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bootBagan3D);
+    } else {
+      bootBagan3D();
+    }
+  </script>
+</body>
+</html>

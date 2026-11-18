@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BAGANOVA — Smart Monitoring System</title>
+    <meta name="description" content="Pusat Pemantauan dan Pengendalian Alat Bagan Tancap Otomatis Berbasis ESP32, Load Cell HX711, Motor DC Gearbox 12V, dan Firebase Realtime Database.">
+    <link rel="icon" type="image/png" href="/assets/aistudio/Baganova_Maritime_Tech_Logo_adc8bd3e.png">
+    
+    <!-- Google Fonts: Plus Jakarta Sans (Logo Style) + Inter + JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome 6 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Fetch Shim to ensure window.fetch is writable for environment runners -->
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          Object.defineProperty(window, 'fetch', {
+            get: function() { return originalFetch; },
+            set: function(newFetch) { originalFetch = newFetch; },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (err) {}
+      })();
+    </script>
+
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <!-- Particle Canvas (Background Night Mode) -->
+    <canvas id="particleCanvas"></canvas>
+
+    <!-- Floating Tech Symbols -->
+    <div class="tech-symbol tech-1">⚡</div>
+    <div class="tech-symbol tech-2">⚓</div>
+    <div class="tech-symbol tech-3">⚙️</div>
+    <div class="tech-symbol tech-4">⚖️</div>
+    <div class="tech-symbol tech-5">🔌</div>
+    <div class="tech-symbol tech-6">📡</div>
+    <div class="tech-symbol tech-7">🎛️</div>
+    <div class="tech-symbol tech-8">🎯</div>
+
+    <!-- Theme Toggle Floating Button -->
+    <button class="theme-toggle" id="themeToggle" aria-label="Ganti Tema Tampilan">☀️</button>
+
+    <!-- Scroll Up Floating Button -->
+    <button class="scroll-up-btn" id="scrollUpBtn" aria-label="Kembali ke Atas"></button>
+
+    <!-- Header Glassmorphism Navigation -->
+    <header class="header" id="header">
+        <a href="#hero" class="logo-section">
+            <div class="logo-icon">
+                <img src="/assets/aistudio/Baganova_Maritime_Tech_Logo_adc8bd3e.png" alt="Logo BAGANOVA" class="brand-logo-img">
+            </div>
+            <div class="logo-text">
+                <span class="main-title">BAGANOVA</span>
+                <span class="subtitle">Smart Automated Bagan</span>
+            </div>
+        </a>
+
+        <!-- Desktop Navigation Bar -->
+        <nav class="top-bar" id="topBar">
+            <div class="user-greeting">
+                <span class="greeting-text">
+                    Operator: <strong style="color: var(--accent);">Bagan-01</strong> 👋
+                </span>
+            </div>
+
+            <a href="#/beranda" class="menu-link active" data-page="beranda"><i class="fas fa-home"></i> BERANDA</a>
+            <a href="#/tentang" class="menu-link" data-page="tentang"><i class="fas fa-info-circle"></i> TENTANG KAMI</a>
+            <a href="#/monitoring" class="menu-link" data-page="monitoring"><i class="fas fa-weight-hanging"></i> MONITORING</a>
+            <a href="#/kontrol" class="menu-link" data-page="kontrol"><i class="fas fa-sliders-h"></i> KONTROL JARING</a>
+            <a href="#/analisis" class="menu-link" data-page="analisis"><i class="fas fa-chart-line"></i> ANALISIS</a>
+            <a href="#/riwayat" class="menu-link" data-page="riwayat"><i class="fas fa-history"></i> RIWAYAT</a>
+            <a href="#/pengaturan" class="menu-link" data-page="pengaturan"><i class="fas fa-cog"></i> PENGATURAN</a>
+
+            <div class="system-badge" id="esp32HeaderBadge" title="Status Komunikasi ESP32 & Firebase Realtime Database">
+                <span class="status-dot"></span>
+                <span id="headerConnStatus">ESP32: Online · Firebase: Synced</span>
+            </div>
+        </nav>
+
+        <!-- Mobile Menu Toggle Button -->
+        <button class="mobile-toggle-btn" id="mobileToggleBtn" aria-label="Buka Menu Navigasi">
+            <i class="fas fa-bars"></i>
+        </button>
+    </header>
+
+    <!-- Mobile Slide Menu -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
+    <aside class="mobile-nav-menu" id="mobileNavMenu">
+        <div class="mobile-menu-header">
+            <div class="mobile-brand-wrap">
+                <img src="/assets/aistudio/Baganova_Maritime_Tech_Logo_adc8bd3e.png" alt="Logo BAGANOVA" class="mobile-logo-img">
+                <div class="logo-text">
+                    <span class="main-title">BAGANOVA</span>
+                    <span class="subtitle">Smart Monitoring System</span>
+                </div>
+            </div>
+            <button class="mobile-close-btn" id="mobileCloseBtn">&times;</button>
+        </div>
+        <div class="mobile-nav-items">
+            <a href="#/beranda" class="mobile-nav-link" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+            <a href="#/tentang" class="mobile-nav-link" data-page="tentang"><i class="fas fa-info-circle"></i> Tentang Kami</a>
+            <a href="#/monitoring" class="mobile-nav-link" data-page="monitoring"><i class="fas fa-weight-hanging"></i> Monitoring Beban</a>
+            <a href="#/kontrol" class="mobile-nav-link" data-page="kontrol"><i class="fas fa-sliders-h"></i> Kontrol Jaring & Alat</a>
+            <a href="#/analisis" class="mobile-nav-link" data-page="analisis"><i class="fas fa-chart-line"></i> Analisis Sistem</a>
+            <a href="#/riwayat" class="mobile-nav-link" data-page="riwayat"><i class="fas fa-history"></i> Riwayat Operasi</a>
+            <a href="#/pengaturan" class="mobile-nav-link" data-page="pengaturan"><i class="fas fa-cog"></i> Pengaturan & Kalibrasi</a>
+        </div>
+    </aside>
+
+    <!-- ==================== PAGE 1: BERANDA / HOME ==================== -->
+    <article class="app-page-view active-page" id="view-beranda">
+        <!-- HERO SECTION -->
+        <section class="hero" id="hero">
+            <!-- Animated Aquatic Canvas in background -->
+            <canvas id="heroAquaticCanvas" class="video-background"></canvas>
+            <div class="video-overlay"></div>
+
+            <div class="hero-content">
+                <div class="hero-brand-emblem">
+                    <img src="/assets/aistudio/Baganova_Maritime_Tech_Logo_adc8bd3e.png" alt="BAGANOVA Emblem" class="hero-emblem-img">
+                </div>
+                <h1>BAGANOVA – Smart Monitoring System</h1>
+                <p>Pusat Pemantauan dan Pengendalian Alat Bagan Tancap Otomatis untuk Membantu Nelayan dalam Proses Pengangkatan Jaring Berbasis Internet & IoT.</p>
+
+                <div class="hero-buttons">
+                    <a href="#/monitoring" class="btn btn-secondary" data-page="monitoring"><span>MONITORING BEBAN</span></a>
+                    <a href="#/kontrol" class="btn btn-primary" data-page="kontrol"><span>KONTROL JARING</span></a>
+                    <a href="#/tentang" class="btn btn-accent" data-page="tentang"><span>TENTANG KAMI</span></a>
+                </div>
+            </div>
+
+            <!-- Infinite Slide Bar Feature Carousel -->
+            <div class="slide-bar-container">
+                <div class="slide-bar" id="slideBar">
+                    <div class="slide-item" data-target="monitoring">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-weight-hanging"></i></div>
+                            <h4>Sensor Beban Tali Utama</h4>
+                            <p>Pembacaan gaya tarik real-time pada satu jalur tali derek jaring</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="monitoring">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-wave-square"></i></div>
+                            <h4>Filter Ombak & Angin ESP32</h4>
+                            <p>Penyaringan digital untuk membuang gangguan fluktuasi laut</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="control">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-cog fa-spin"></i></div>
+                            <h4>Motor Winch Otomatis</h4>
+                            <p>Memicu penggulungan tali utama saat target ambang batas tercapai</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="control">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-shield-alt"></i></div>
+                            <h4>Limit Switch & E-STOP</h4>
+                            <p>Proteksi penghenti motor otomatis di posisi atas & tombol darurat</p>
+                        </div>
+                    </div>
+                    <!-- Repeat for marquee loop -->
+                    <div class="slide-item" data-target="monitoring">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-weight-hanging"></i></div>
+                            <h4>Sensor Beban Tali Utama</h4>
+                            <p>Pembacaan gaya tarik real-time pada satu jalur tali derek jaring</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="monitoring">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-wave-square"></i></div>
+                            <h4>Filter Ombak & Angin ESP32</h4>
+                            <p>Penyaringan digital untuk membuang gangguan fluktuasi laut</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="control">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-cog fa-spin"></i></div>
+                            <h4>Motor Winch Otomatis</h4>
+                            <p>Memicu penggulungan tali utama saat target ambang batas tercapai</p>
+                        </div>
+                    </div>
+                    <div class="slide-item" data-target="control">
+                        <div class="slide-item-content">
+                            <div class="slide-item-icon"><i class="fas fa-shield-alt"></i></div>
+                            <h4>Limit Switch & E-STOP</h4>
+                            <p>Proteksi penghenti motor otomatis di posisi atas & tombol darurat</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Home Portals Section (Direct Multi-Page Navigation Hub) -->
+        <section class="home-portals-section">
+            <div class="home-portals-container">
+                <div class="section-title-wrap">
+                    <span class="sub-badge"><i class="fas fa-th-large"></i> PORTAL UTAMA SISTEM BAGANOVA</span>
+                    <h2>Navigasi Menu & Layanan Sistem</h2>
+                    <p>Pilih halaman di bawah ini untuk mengakses modul instrumen, kendali mesin bagan, analisis data, atau profil tim pengembang.</p>
+                </div>
+
+                <div class="home-portals-grid">
+                    <!-- Portal 1: Tentang Kami -->
+                    <a href="#/tentang" class="portal-nav-card" data-page="tentang">
+                        <div class="portal-card-top">
+                            <div class="portal-card-icon"><i class="fas fa-info-circle"></i></div>
+                            <span class="portal-badge">PROFIL SISTEM</span>
+                        </div>
+                        <div class="portal-card-body">
+                            <h3>Tentang Kami</h3>
+                            <p>Konsep BAGANOVA Smart Monitoring System, urgensi nelayan pesisir, arsitektur Firebase Realtime Database, dan profil tim pengembang Sistem Informasi Kelautan UPI Kampus Serang.</p>
+                        </div>
+                        <div class="portal-card-footer">
+                            <span>Buka Halaman Tentang Kami</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </div>
+                    </a>
+
+                    <!-- Portal 2: Monitoring Beban -->
+                    <a href="#/monitoring" class="portal-nav-card" data-page="monitoring">
+                        <div class="portal-card-top">
+                            <div class="portal-card-icon"><i class="fas fa-weight-hanging"></i></div>
+                            <span class="portal-badge">LIVE 20 HZ</span>
+                        </div>
+                        <div class="portal-card-body">
+                            <h3>Monitoring Beban Tali Real-Time</h3>
+                            <p>Grafik osiloskop gelombang beban tarik tali derek utama, visualisasi filter ombak digital ESP32, modul HX711, dan telemetri kestabilan sensor load cell.</p>
+                        </div>
+                        <div class="portal-card-footer">
+                            <span>Buka Halaman Monitoring</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </div>
+                    </a>
+
+                    <!-- Portal 3: Kontrol Jaring -->
+                    <a href="#/kontrol" class="portal-nav-card" data-page="kontrol">
+                        <div class="portal-card-top">
+                            <div class="portal-card-icon"><i class="fas fa-sliders-h"></i></div>
+                            <span class="portal-badge">MOTOR GEARBOX 12V</span>
+                        </div>
+                        <div class="portal-card-body">
+                            <h3>Kendali Jaring & Skematik Alat</h3>
+                            <p>Otomatisasi pengangkatan saat batas maksimal tercapai, kontrol manual motor DC gearbox 12V, mekanisme penurunan manual, dan proteksi limit switch batas atas.</p>
+                        </div>
+                        <div class="portal-card-footer">
+                            <span>Buka Halaman Kontrol</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </div>
+                    </a>
+
+                    <!-- Portal 4: Analisis Sistem -->
+                    <a href="#/analisis" class="portal-nav-card" data-page="analisis">
+                        <div class="portal-card-top">
+                            <div class="portal-card-icon"><i class="fas fa-chart-line"></i></div>
+                            <span class="portal-badge">EVALUASI KINERJA</span>
+                        </div>
+                        <div class="portal-card-body">
+                            <h3>Analisis Kinerja & Respon Alat</h3>
+                            <p>Grafik perbandingan beban target vs aktual, persentase keberhasilan pengangkatan otomatis, dan log rejeksi gangguan osilasi ombak laut.</p>
+                        </div>
+                        <div class="portal-card-footer">
+                            <span>Buka Halaman Analisis</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </div>
+                    </a>
+
+                    <!-- Portal 5: Riwayat Operasi & Pengaturan -->
+                    <a href="#/riwayat" class="portal-nav-card" data-page="riwayat">
+                        <div class="portal-card-top">
+                            <div class="portal-card-icon"><i class="fas fa-history"></i></div>
+                            <span class="portal-badge">AUDIT & SETPOINT</span>
+                        </div>
+                        <div class="portal-card-body">
+                            <h3>Riwayat Pembacaan & Pengaturan</h3>
+                            <p>Catatan log waktu pengangkatan jaring, batas maksimal beban pemicu, durasi motor, ekspor CSV, serta kalibrasi threshold setpoint via website.</p>
+                        </div>
+                        <div class="portal-card-footer">
+                            <span>Buka Riwayat Operasi</span>
+                            <i class="fas fa-arrow-right"></i>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </section>
+    </article><!-- END PAGE 1: BERANDA -->
+
+    <!-- ==================== PAGE 2: TENTANG KAMI ==================== -->
+    <article class="app-page-view" id="view-tentang">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Tentang Kami</span>
+                </div>
+                <h1 class="page-banner-title">Tentang Kami — BAGANOVA Smart Monitoring System</h1>
+                <p class="page-banner-subtitle">Pusat Pemantauan dan Pengendalian Alat Bagan Tancap Otomatis Berbasis ESP32, Sensor Berat Load Cell HX711, Motor DC Gearbox 12V, dan Firebase Realtime Database.</p>
+            </div>
+        </div>
+
+        <!-- ABOUT SECTION: COMPREHENSIVE MARITIME PORTAL & SYSTEM ARCHITECTURE -->
+        <section class="about-section" id="about">
+            <div class="about-container">
+                <!-- Section Header -->
+                <div class="about-header-wrap">
+                    <span class="section-tag"><i class="fas fa-microchip"></i> TENTANG KAMI & KONSEP SISTEM BAGANOVA</span>
+                    <h2>Pusat Kendali & Otomatisasi Bagan Tancap Nelayan</h2>
+                    <p class="about-lead">
+                        Website BAGANOVA Smart Monitoring System merupakan website berbasis internet yang dirancang sebagai pusat pemantauan dan pengendalian alat bagan tancap otomatis untuk membantu nelayan dalam proses pengangkatan jaring.
+                    </p>
+                </div>
+
+            <!-- About Sub-Navigation Tabs -->
+            <div class="about-tabs-nav" id="aboutTabsNav" role="tablist">
+                <button class="about-tab-btn active" data-tab="tab-overview" role="tab" aria-selected="true">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Konsep & Urgensi Sistem</span>
+                </button>
+                <button class="about-tab-btn" data-tab="tab-flowchart" role="tab" aria-selected="false">
+                    <i class="fas fa-project-diagram"></i>
+                    <span>Alur Kerja & Integrasi Firebase</span>
+                </button>
+                <button class="about-tab-btn" data-tab="tab-hardware" role="tab" aria-selected="false">
+                    <i class="fas fa-microchip"></i>
+                    <span>Spesifikasi Hardware (ESP32 & Motor 12V)</span>
+                </button>
+                <button class="about-tab-btn" data-tab="tab-team" role="tab" aria-selected="false">
+                    <i class="fas fa-users"></i>
+                    <span>Identitas Tim Pengembang</span>
+                </button>
+                <button class="about-tab-btn" data-tab="tab-sop" role="tab" aria-selected="false">
+                    <i class="fas fa-clipboard-check"></i>
+                    <span>SOP Operasional & FAQ</span>
+                </button>
+            </div>
+
+            <!-- TAB 1: OVERVIEW & BACKGROUND -->
+            <div class="about-tab-panel active" id="tab-overview" role="tabpanel">
+                <div class="about-content">
+                    <div class="about-text">
+                        <span class="sub-badge"><i class="fas fa-water"></i> KONSEP & ARSITEKTUR UTAMA SISTEM</span>
+                        <h3>BAGANOVA Smart Monitoring System</h3>
+                        
+                        <!-- Featured Concept Manifesto Card -->
+                        <div class="concept-manifesto-card" style="background: rgba(0, 194, 203, 0.08); border: 1px solid var(--card-border); border-radius: 14px; padding: 1.5rem; margin-bottom: 1.5rem;">
+                            <p style="font-size: 1.05rem; line-height: 1.8; color: var(--text-primary); margin-bottom: 0;">
+                                <strong>Website BAGANOVA Smart Monitoring System</strong> merupakan website berbasis internet yang dirancang sebagai pusat pemantauan dan pengendalian alat bagan tancap otomatis untuk membantu nelayan dalam proses pengangkatan jaring. Website ini dapat diakses melalui <strong>smartphone maupun laptop</strong> selama terhubung dengan internet, sehingga pengguna dapat memantau kondisi alat tanpa harus selalu berada di dekat perangkat.
+                            </p>
+                            <p style="font-size: 1.05rem; line-height: 1.8; color: var(--text-primary); margin-top: 1rem; margin-bottom: 0;">
+                                Sistem bekerja dengan mengintegrasikan <strong>mikrokontroler ESP32</strong>, <strong>sensor berat (load cell) yang dihubungkan dengan modul HX711</strong>, <strong>motor DC gearbox 12V</strong>, dan <strong>Firebase Realtime Database</strong> sebagai media komunikasi antara perangkat keras dan website. Sensor berat berfungsi mendeteksi beban pada jaring secara langsung, kemudian data tersebut dikirimkan oleh ESP32 ke Firebase dan ditampilkan pada dashboard website secara realtime dalam bentuk nilai berat, batas maksimal beban, serta status pengangkatan jaring.
+                            </p>
+                            <p style="font-size: 1.05rem; line-height: 1.8; color: var(--text-primary); margin-top: 1rem; margin-bottom: 0;">
+                                Pengguna dapat mengatur <strong>batas maksimal berat sesuai kebutuhan</strong> melalui website. Ketika beban jaring telah mencapai batas yang ditentukan, ESP32 secara otomatis memberikan perintah kepada motor untuk menggulung tali utama dan mengangkat jaring. Selama proses tersebut, website menampilkan perubahan status alat: mulai dari <em>kondisi siaga</em>, <em>proses pengangkatan</em>, hingga <em>jaring mencapai posisi atas</em>.
+                            </p>
+                            <p style="font-size: 1.05rem; line-height: 1.8; color: var(--text-primary); margin-top: 1rem; margin-bottom: 0;">
+                                Sistem juga dilengkapi dengan fitur pemantauan koneksi perangkat, indikator kondisi motor, riwayat pembacaan berat, serta kontrol manual untuk membantu pengguna melakukan pengendalian atau menghentikan proses apabila diperlukan. Sementara itu, <strong>proses penurunan jaring tetap dilakukan secara manual</strong> untuk menyederhanakan mekanisme dan mengurangi kompleksitas sistem.
+                            </p>
+                        </div>
+
+                        <!-- Key Performance Highlights -->
+                        <div class="about-stats">
+                            <div class="stat-card">
+                                <span class="stat-number">12V DC</span>
+                                <span class="stat-label">Motor Gearbox Torsi Tinggi</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-number text-val" id="statTargetLoad">85.0 kg</span>
+                                <span class="stat-label">Batas Maksimal Beban</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-number text-val" style="color: var(--accent);">Realtime</span>
+                                <span class="stat-label">Firebase Cloud Sync</span>
+                            </div>
+                            <div class="stat-card">
+                                <span class="stat-number text-val" style="color: #38bdf8;">20 Hz</span>
+                                <span class="stat-label">Sampling HX711 ESP32</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Comparison & Key Distinction Card -->
+                    <div class="about-visual-card">
+                        <div class="visual-card-inner">
+                            <div class="visual-card-badge"><i class="fas fa-balance-scale-right"></i> PERBANDINGAN OPERASIONAL</div>
+                            
+                            <div class="comparison-list">
+                                <div class="comp-box comp-traditional">
+                                    <div class="comp-head">
+                                        <i class="fas fa-times-circle"></i>
+                                        <strong>Bagan Tancap Konvensional</strong>
+                                    </div>
+                                    <ul>
+                                        <li>Pengangkatan manual putar engkol kayu menguras tenaga</li>
+                                        <li>Nelayan harus selalu berjaga di gubuk bagan tengah laut</li>
+                                        <li>Menebak waktu angkat jaring tanpa indikator berat pasti</li>
+                                        <li>Resiko cedera tangan terjepit dan tali derek putus mendadak</li>
+                                    </ul>
+                                </div>
+
+                                <div class="comp-box comp-baganova">
+                                    <div class="comp-head">
+                                        <i class="fas fa-check-circle"></i>
+                                        <strong>BAGANOVA Smart Monitoring System</strong>
+                                    </div>
+                                    <ul>
+                                        <li>Pengangkatan otomatis motor DC gearbox 12V saat beban target tercapai</li>
+                                        <li>Sensor load cell + HX711 membaca berat jaring langsung secara presisi</li>
+                                        <li>Komunikasi Firebase Realtime Database: pantau via HP / laptop dari darat</li>
+                                        <li>Limit switch memutus motor di puncak, penurunan aman terkendali manual</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div class="about-cta-box">
+                                <p>Ingin melihat alur integrasi ESP32 & Firebase?</p>
+                                <button class="btn btn-primary btn-sm" onclick="document.querySelector('[data-tab=\'tab-flowchart\']').click()">Buka Diagram Alir & Firebase</button>
+                            </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: FLOWCHART & 8-STEP MECHANISM -->
+            <div class="about-tab-panel" id="tab-flowchart" role="tabpanel">
+                <div class="flowchart-section-wrap">
+                    <div class="flowchart-header">
+                        <span class="sub-badge"><i class="fas fa-microchip"></i> DIAGRAM ALIR KEPUTUSAN FIRMWARE ESP32</span>
+                        <h3>Logika Algoritma Deteksi Beban & Kontrol Motor Winch</h3>
+                        <p>Diagram di bawah ini menggambarkan alur komputasi mandiri pada mikrokontroler ESP32 bagan tancap dalam memproses pembacaan tegangan sensor, menyaring kebisingan ombak, hingga mengeksekusi penghentian motor.</p>
+                    </div>
+
+                    <!-- Visual Glowing Interactive Flowchart -->
+                    <div class="neon-flowchart-grid">
+                        <div class="flow-step-node">
+                            <div class="flow-node-badge">TAHAP 1</div>
+                            <div class="flow-node-icon"><i class="fas fa-weight-hanging"></i></div>
+                            <h4>Sensor Beban Inline</h4>
+                            <p>S-Beam Load cell membaca gaya tarik aksial pada 1 tali derek utama.</p>
+                            <span class="node-telemetry">Sampling: 20 Hz ADC HX711</span>
+                        </div>
+
+                        <div class="flow-arrow"><i class="fas fa-chevron-right"></i></div>
+
+                        <div class="flow-step-node">
+                            <div class="flow-node-badge">TAHAP 2</div>
+                            <div class="flow-node-icon"><i class="fas fa-wave-square"></i></div>
+                            <h4>Filter Ombak (MA-15)</h4>
+                            <p>ESP32 meredam derau ombak dan angin menggunakan Moving Average Window.</p>
+                            <span class="node-telemetry">Kestabilan Sinyal > 90%</span>
+                        </div>
+
+                        <div class="flow-arrow"><i class="fas fa-chevron-right"></i></div>
+
+                        <div class="flow-step-node decision-node">
+                            <div class="flow-node-badge decision">GERBANG KEPUTUSAN</div>
+                            <div class="flow-node-icon"><i class="fas fa-balance-scale"></i></div>
+                            <h4>Uji Ambang Batas</h4>
+                            <p>Apakah Beban >= Target (misal 85 kg) & sinyal stabil selama 3 detik?</p>
+                            <span class="node-telemetry">Ya -> Picu Motor | Tidak -> Terus Pantau</span>
+                        </div>
+
+                        <div class="flow-arrow"><i class="fas fa-chevron-right"></i></div>
+
+                        <div class="flow-step-node highlight-node">
+                            <div class="flow-node-badge action">TAHAP 3 (AKSI)</div>
+                            <div class="flow-node-icon"><i class="fas fa-cog fa-spin"></i></div>
+                            <h4>Trigger Motor Winch</h4>
+                            <p>ESP32 mengaktifkan relay/driver motor winch 24V untuk menggulung tali utama.</p>
+                            <span class="node-telemetry">Rangka Bridle Angkat 4 Sudut</span>
+                        </div>
+
+                        <div class="flow-arrow"><i class="fas fa-chevron-right"></i></div>
+
+                        <div class="flow-step-node safety-node">
+                            <div class="flow-node-badge safety">PROTEKSI STOP</div>
+                            <div class="flow-node-icon"><i class="fas fa-stop-circle"></i></div>
+                            <h4>Limit Switch Posisi Atas</h4>
+                            <p>Sakelar mekanis tersentuh di bibir geladak, seketika memutus daya motor.</p>
+                            <span class="node-telemetry">Rem Mekanis Mengunci Aman</span>
+                        </div>
+                    </div>
+
+                    <!-- 8 Tahapan Detail Kartu -->
+                    <div class="mechanism-detailed-grid">
+                        <div class="mech-card">
+                            <div class="mech-num">01</div>
+                            <h4>Sensor Membaca Gaya Tarik</h4>
+                            <p>Load cell yang terpasang secara inline pada tali derek utama membaca tarikan total secara berkelanjutan dengan konversi 24-bit.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">02</div>
+                            <h4>Penerimaan Sinyal ESP32</h4>
+                            <p>Mikrokontroler ESP32-WROOM-32 menerima paket sinyal digital berkecepatan 20 sampel per detik untuk diproses secara lokal.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">03</div>
+                            <h4>Penyaringan Ombak & Angin</h4>
+                            <p>Algoritma filter komputasi meredam lonjakan beban sesaat akibat ombak laut sehingga tidak memicu pengangkatan prematur.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">04</div>
+                            <h4>Validasi Ambang Batas Stabil</h4>
+                            <p>Ketika beban akumulasi ikan melampaui target ambang batas dan kondisi stabil minimal 3 detik, sinyal pemicu aktif.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">05</div>
+                            <h4>Penggulungan Tali oleh Winch</h4>
+                            <p>Motor winch DC torsi tinggi mulai memutar drum penggulung untuk menarik satu tali utama ke atas secara mulus dan terkendali.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">06</div>
+                            <h4>Pengangkatan 4 Sudut Simetris</h4>
+                            <p>Rangka pembagi (square spreader bridle) menyalurkan tarikan tali utama secara merata ke 4 tali sudut jaring bagan.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">07</div>
+                            <h4>Penghentian Otomatis Limit Switch</h4>
+                            <p>Begitu rangka jaring mencapai batas elevasi maksimal, sakelar pembatas memutus arus motor dan rem mekanis mengunci posisi.</p>
+                        </div>
+                        <div class="mech-card">
+                            <div class="mech-num">08</div>
+                            <h4>Penurunan Manual oleh Operator</h4>
+                            <p>Setelah hasil tangkapan diambil nelayan, penurunan jaring kembali dilakukan secara manual via web untuk menjamin keselamatan.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: HARDWARE SPECIFICATIONS -->
+            <div class="about-tab-panel" id="tab-hardware" role="tabpanel">
+                <div class="hardware-specs-wrap">
+                    <div class="hardware-header">
+                        <span class="sub-badge"><i class="fas fa-tools"></i> SPESIFIKASI INSTRUMENTASI & AKTUALISASI</span>
+                        <h3>Komponen Perangkat Keras Maritim BAGANOVA</h3>
+                        <p>Pemilihan komponen dirancang khusus untuk ketahanan lingkungan laut berkadar garam tinggi, keandalan torsi mekanik, dan presisi pembacaan sensor.</p>
+                    </div>
+
+                    <div class="hardware-grid">
+                        <!-- Component 1 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-weight-hanging"></i></div>
+                                <span class="hw-tag">SENSOR BEBAN</span>
+                            </div>
+                            <h4>S-Beam Tension Load Cell</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Rentang Kapasitas:</strong> 0 - 500 kg (Aksial Tarik)</li>
+                                <li><strong>Tingkat Akurasi:</strong> ±0.03% Full Scale</li>
+                                <li><strong>Material:</strong> Alloy Steel Berlapis Nikel Anti-Korosi</li>
+                                <li><strong>Proteksi Lingkungan:</strong> IP67 Tahan Air & Kabut Garam</li>
+                                <li><strong>Posisi:</strong> Terpasang inline di antara winch & tali utama</li>
+                            </ul>
+                        </div>
+
+                        <!-- Component 2 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-microchip"></i></div>
+                                <span class="hw-tag">KONTROLER UTAMA</span>
+                            </div>
+                            <h4>ESP32-WROOM-32 Microcontroller</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Prosesor:</strong> Tensilica Xtensa Dual-Core 32-bit (240 MHz)</li>
+                                <li><strong>Konektivitas:</strong> Wi-Fi 802.11 b/g/n & BLE 4.2</li>
+                                <li><strong>Tegangan Operasi:</strong> 3.3V DC (dengan regulator step-down)</li>
+                                <li><strong>Frekuensi Pengambilan:</strong> 20 Hz Real-Time Telemetri</li>
+                                <li><strong>Fungsi:</strong> Filter kebisingan, logika ambang batas & Web server</li>
+                            </ul>
+                        </div>
+
+                        <!-- Component 3 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-cogs"></i></div>
+                                <span class="hw-tag">AKTUATOR PENGGERAK</span>
+                            </div>
+                            <h4>Motor DC Gearbox 12V High-Torque</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Tegangan Operasi:</strong> 12V DC (Didukung Aki Laut & Panel Surya)</li>
+                                <li><strong>Transmisi Gearbox:</strong> Heavy-Duty Planetary Gearbox Reduksi 1:180</li>
+                                <li><strong>Sistem Penggulung:</strong> Winch Drum Tali Derek Utama Tunggal</li>
+                                <li><strong>Kecepatan Gulung:</strong> ~0.25 m/detik (pengangkatan stabil)</li>
+                                <li><strong>Kapasitas Angkat:</strong> Hingga 250 kg beban dinamis jaring</li>
+                            </ul>
+                        </div>
+
+                        <!-- Component 4 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-shield-alt"></i></div>
+                                <span class="hw-tag">PROTEKSI KESELAMATAN</span>
+                            </div>
+                            <h4>Limit Switch Industri IP67</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Tipe Kontak:</strong> Roller Lever Microswitch (Snap Action)</li>
+                                <li><strong>Kapasitas Arus:</strong> 10A 250V AC / 5A 30V DC</li>
+                                <li><strong>Rating Perlindungan:</strong> IP67 Sealed Casing</li>
+                                <li><strong>Fungsi Kritis:</strong> Pemutus daya langsung motor di puncak jaring</li>
+                                <li><strong>Fitur Fail-safe:</strong> Mencegah kabel over-stretch & motor terbakar</li>
+                            </ul>
+                        </div>
+
+                        <!-- Component 5 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-bolt"></i></div>
+                                <span class="hw-tag">PENGONDISI SINYAL</span>
+                            </div>
+                            <h4>HX711 24-Bit ADC Module</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Resolusi Konversi:</strong> 24-bit Analog-to-Digital Precision</li>
+                                <li><strong>PGA On-Chip:</strong> Penguatan gain programmable 64 atau 128</li>
+                                <li><strong>Konsumsi Daya:</strong> Sangat rendah (&lt; 1.5mA saat operasi)</li>
+                                <li><strong>Laju Sampel:</strong> Dapat dipilih 10 SPS atau 80 SPS</li>
+                                <li><strong>Fungsi:</strong> Membaca tegangan mikrovolt dari jembatan strain gauge</li>
+                            </ul>
+                        </div>
+
+                        <!-- Component 6 -->
+                        <div class="hardware-item-card">
+                            <div class="hw-card-top">
+                                <div class="hw-icon"><i class="fas fa-vector-square"></i></div>
+                                <span class="hw-tag">MEKANIKAL BAGAN</span>
+                            </div>
+                            <h4>Square Spreader Bridle SUS-304</h4>
+                            <ul class="hw-spec-list">
+                                <li><strong>Material:</strong> Pipa Baja Tahan Karat Stainless SUS-304</li>
+                                <li><strong>Dimensi Rangka:</strong> 1.2 m × 1.2 m persegi simetris</li>
+                                <li><strong>Sistem Tali:</strong> 1 Tali Utama Winch membagi ke 4 Tali Sudut Jaring</li>
+                                <li><strong>Kelebihan:</strong> Menjaga mulut jaring tetap terbuka mendatar</li>
+                                <li><strong>Ketahanan:</strong> Bebas korosi air laut hingga 5+ tahun</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Hardware Summary Table -->
+                    <div class="hw-summary-table-wrap">
+                        <h4><i class="fas fa-table"></i> Ringkasan Parameter Kelistrikan & Fisik</h4>
+                        <div class="table-responsive">
+                            <table class="specs-table-modern">
+                                <thead>
+                                    <tr>
+                                        <th>Sub-Sistem</th>
+                                        <th>Komponen Utama</th>
+                                        <th>Spesifikasi Kunci</th>
+                                        <th>Tegangan & Daya</th>
+                                        <th>Perlindungan Lingkungan</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Sensor Gaya</strong></td>
+                                        <td>S-Beam Load Cell + HX711</td>
+                                        <td>Kapasitas 500 kg, Akurasi 0.03%</td>
+                                        <td>5V DC / &lt; 20mA</td>
+                                        <td>IP67 Waterproof Casing</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Mikrokontroler</strong></td>
+                                        <td>ESP32-WROOM-32 Dual Core</td>
+                                        <td>240 MHz, Wi-Fi 802.11 b/g/n</td>
+                                        <td>3.3V DC / ~150mA</td>
+                                        <td>Box Enclosure Akrilik IP65</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Aktuator Derek</strong></td>
+                                        <td>Motor DC Gearbox 12V</td>
+                                        <td>Torsi Tinggi, Reduksi Gearbox 1:180</td>
+                                        <td>12V DC (Aki Laut / Solar Panel)</td>
+                                        <td>Sealed Housing Anti-Percikan</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Proteksi Atas</strong></td>
+                                        <td>Industrial Limit Switch</td>
+                                        <td>Snap-Action Roller Lever 10A</td>
+                                        <td>Pasif (Sakelar Kering)</td>
+                                        <td>IP67 Oil & Salt Water Resistant</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: RESEARCH TEAM & PARTNERS -->
+            <div class="about-tab-panel" id="tab-team" role="tabpanel">
+                <div class="team-section-wrap">
+                    <div class="team-header">
+                        <span class="sub-badge"><i class="fas fa-graduation-cap"></i> RISET & PENGEMBANGAN TEKNOLOGI MARITIM</span>
+                        <h3>Identitas Tim Pengembang — BAGANOVA</h3>
+                        <p>Inovasi ini dirancang dan dikembangkan oleh tim mahasiswa Sistem Informasi Kelautan (SIK) UPI Kampus Serang bersama dosen pembimbing.</p>
+                    </div>
+
+                    <!-- Team Management Action Bar -->
+                    <div class="team-action-bar">
+                        <div>
+                            <strong><i class="fas fa-users-cog"></i> Profil Kelompok Peneliti & Mahasiswa:</strong>
+                            <p>Program Studi Sistem Informasi Kelautan (SIK) — Universitas Pendidikan Indonesia (UPI) Kampus Serang</p>
+                        </div>
+                        <div class="team-action-buttons">
+                            <button class="btn btn-primary btn-sm" id="btnOpenTeamModal">
+                                <i class="fas fa-user-edit"></i> Edit / Unggah Foto Anggota
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="btnResetTeamData">
+                                <i class="fas fa-undo"></i> Reset Bawaan
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Team Members Cards Container -->
+                    <div class="team-cards-grid" id="teamCardsGrid">
+                        <!-- Populated and persisted by app.js with photo upload support -->
+                    </div>
+
+                    <!-- Partner Fishermen Banner -->
+                    <div class="partner-banner-card">
+                        <div class="partner-icon"><i class="fas fa-hands-helping"></i></div>
+                        <div class="partner-info">
+                            <h4>Mitra Kolaborasi Uji Operasional Lapangan:</h4>
+                            <h3>Kelompok Usaha Bersama (KUB) Nelayan Bagan Teluk Banten</h3>
+                            <p>
+                                Sistem BAGANOVA diuji secara langsung bersama nelayan bagan tancap pesisir untuk memvalidasi ketahanan mekanik terhadap hempasan ombak nyata, kemudahan pengoperasian bagi nelayan, dan akurasi waktu pengangkatan jaring di laut lepas.
+                            </p>
+                        </div>
+                        <div class="partner-stat-badge">
+                            <span class="p-num">14+</span>
+                            <span class="p-lbl">Siklus Uji Laut Nyata</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 5: SOP NELAYAN & FAQ -->
+            <div class="about-tab-panel" id="tab-sop" role="tabpanel">
+                <div class="sop-faq-wrap">
+                    <!-- SOP Section -->
+                    <div class="sop-block">
+                        <div class="sop-header">
+                            <span class="sub-badge"><i class="fas fa-book"></i> STANDAR OPERASIONAL PROSEDUR (SOP)</span>
+                            <h3>4 Langkah Pengoperasian Smart Bagan bagi Nelayan</h3>
+                            <p>Panduan ringkas bagi operator nelayan di geladak bagan untuk memastikan operasi penangkapan berjalan aman dan optimal.</p>
+                        </div>
+
+                        <div class="sop-steps-grid">
+                            <div class="sop-card">
+                                <div class="sop-step-badge">LANGKAH 1</div>
+                                <h4>Pemeriksaan Awal & Kalibrasi Tare</h4>
+                                <p>Pastikan jaring terendam kosong di dalam air. Buka menu <em>Pengaturan</em>, periksa apakah beban terbaca ~20 kg (berat mati jaring terendam), lalu tekan <strong>Kalibrasi Tara Baseline</strong>.</p>
+                            </div>
+
+                            <div class="sop-card">
+                                <div class="sop-step-badge">LANGKAH 2</div>
+                                <h4>Uji Limit Switch & E-STOP Darurat</h4>
+                                <p>Tekan tuas sakelar pembatas mekanis (limit switch) secara manual untuk memastikan lampu indikator di dashboard menyala hijau (siaga), dan pastikan tombol E-STOP merah mudah dijangkau.</p>
+                            </div>
+
+                            <div class="sop-card">
+                                <div class="sop-step-badge">LANGKAH 3</div>
+                                <h4>Pengaktifan Otomasi Pengangkatan</h4>
+                                <p>Atur target ambang batas panen (default 85 kg). Sistem akan otomatis memonitor gaya tarik pada tali utama dan langsung memicu motor winch begitu target beban ikan tercapai secara stabil.</p>
+                            </div>
+
+                            <div class="sop-card">
+                                <div class="sop-step-badge">LANGKAH 4</div>
+                                <h4>Penurunan Jaring Kembali Secara Manual</h4>
+                                <p>Setelah hasil tangkapan selesai diserok nelayan ke geladak, turunkan kembali jaring secara manual menggunakan tombol <strong>Turunkan Jaring</strong> di website demi verifikasi keamanan area.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- FAQ Section (Accordion) -->
+                    <div class="faq-block">
+                        <div class="faq-header">
+                            <span class="sub-badge"><i class="fas fa-question-circle"></i> TANYA JAWAB UMUM</span>
+                            <h3>Pertanyaan yang Sering Diajukan Seputar BAGANOVA</h3>
+                        </div>
+
+                        <div class="accordion-container" id="faqAccordion">
+                            <div class="accordion-item">
+                                <button class="accordion-header" aria-expanded="false">
+                                    <span>Bagaimana sistem membedakan beban ikan dengan ayunan ombak atau arus laut?</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="accordion-content">
+                                    <p>
+                                        ESP32 menjalankan algoritma filter digital rata-rata bergerak (Moving Average Window 15 sampel). Sentakan ombak laut bersifat fluktuatif naik-turun dalam fraksi detik dan segera diredam. Sebaliknya, akumulasi ikan di dalam kantong jaring menghasilkan kenaikan beban yang konsisten dan stabil. Sistem hanya akan memicu motor jika beban melampaui target dan nilainya bertahan stabil minimal 3 detik kontinu.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <button class="accordion-header" aria-expanded="false">
+                                    <span>Mengapa penurunan jaring dilakukan secara manual melalui website, bukan otomatis?</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="accordion-content">
+                                    <p>
+                                        Ini merupakan protokol keselamatan maritim (human-in-the-loop safety protocol). Menurunkan jaring ke laut membutuhkan kepastian visual bahwa tidak ada perahu perintis nelayan di bawah bagan, tidak ada tali yang terlilit, dan jaring telah benar-benar dikosongkan. Oleh karena itu, operator nelayan mempertahankan kendali penuh untuk menurunkan jaring melalui tombol kendali di website.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <button class="accordion-header" aria-expanded="false">
+                                    <span>Apa yang terjadi jika terjadi keadaan darurat saat motor sedang menggulung jaring?</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="accordion-content">
+                                    <p>
+                                        Tersedia tombol <strong>EMERGENCY STOP (E-STOP)</strong> berwarna merah menyala baik di dashboard website maupun sakelar fisik di instalasi bagan. Menekan tombol E-STOP seketika memutus aliran listrik ke motor, dan mekanisme pengereman otomatis internal winch (cone friction brake) langsung mengunci posisi jaring agar tidak jatuh.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <button class="accordion-header" aria-expanded="false">
+                                    <span>Bagaimana jika koneksi internet terputus di tengah laut malam hari?</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                <div class="accordion-content">
+                                    <p>
+                                        Mikrokontroler ESP32 bertindak sebagai Access Point mandiri lokal (Local Gateway). Dashboard web dapat diakses langsung oleh operator melalui jaringan Wi-Fi lokal bagan tanpa memerlukan kuota atau sinyal internet eksternal. Selain itu, seluruh logika ambang batas dan proteksi limit switch berjalan mandiri (stand-alone) di dalam memori firmware ESP32.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    </article><!-- END PAGE 2: TENTANG -->
+
+    <!-- ==================== PAGE 3: MONITORING BEBAN ==================== -->
+    <article class="app-page-view" id="view-monitoring">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Monitoring Beban Tali</span>
+                </div>
+                <h1 class="page-banner-title">Monitoring Gaya Tarik & Kestabilan Sensor</h1>
+                <p class="page-banner-subtitle">Telemetri Real-Time 20 Hz dari S-Beam Load Cell pada Tali Derek Utama dengan Filter Digital Ombak ESP32.</p>
+            </div>
+        </div>
+
+        <!-- SPLIT SECTION 1: MONITORING BEBAN (LOAD SENSOR & WAVEFORM) -->
+        <section class="split-section" id="monitoring">
+            <!-- Visual Container / Real-time Tension Waveform Canvas -->
+            <div class="split-image">
+                <div class="camera-monitor-box">
+                    <!-- Real-time load graph canvas -->
+                    <canvas id="loadWaveformCanvas" width="800" height="500" class="camera-canvas" aria-label="Grafik Real-time Beban Tali"></canvas>
+
+                    <!-- Load Monitor HUD Overlays -->
+                    <div class="camera-hud-top">
+                        <div class="hud-tag">
+                            <span class="hud-pulse"></span>
+                            <span id="hudEspSource">ESP32-WROOM-32 [LOAD CELL INLINE]</span>
+                        </div>
+                        <div class="hud-stats">
+                            <span id="hudSamplingRate">SAMPLING: 20 Hz</span>
+                            <span id="hudFilterStatus">FILTER: AKTIF (MA-15)</span>
+                        </div>
+                    </div>
+
+                    <div class="camera-hud-bottom">
+                        <span id="hudTensionUnit"><i class="fas fa-balance-scale"></i> SATUAN: KG / NEWTON | TALI UTAMA</span>
+                        <span class="hud-pill" id="monitoringPill">LIVE TELEMETRI</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Content Panel -->
+            <div class="split-content">
+                <span class="section-tag"><i class="fas fa-weight-hanging"></i> PEMANTAUAN GAYA TARIK REAL-TIME</span>
+                <h2>Monitoring Beban & Kestabilan Sensor</h2>
+                <p>
+                    Sistem membaca gaya tarik pada tali utama yang menghubungkan winch dengan rangka jaring. Dilengkapi algoritma penyaringan sinyal digital untuk memisahkan gaya tarik akumulasi ikan dari hentakan ombak dan hembusan angin.
+                </p>
+
+                <!-- Primary Tension Gauge Card -->
+                <div class="tension-hero-card">
+                    <div class="tension-main-val">
+                        <small>GAYA TARIK AKTUAL PADA TALI UTAMA</small>
+                        <div class="tension-number-row">
+                            <h2 id="currentTensionDisplay">24.5 kg</h2>
+                            <span class="tension-unit-tag" id="currentNewtonDisplay">240.3 N</span>
+                        </div>
+                        <div class="stability-row">
+                            <span class="stability-pill stable" id="sensorStabilityBadge">
+                                <i class="fas fa-check-circle"></i> Sinyal Stabil (96.4%)
+                            </span>
+                            <span class="baseline-note" id="baselineNote">Baseline Jaring Kosong: 20.0 kg</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Simulation Controls -->
+                <div class="control-action-group">
+                    <button class="action-btn action-primary" id="btnSimulateFish">
+                        <i class="fas fa-arrow-trend-up"></i> Tambah Beban Ikan (+15 kg)
+                    </button>
+                    <button class="action-btn action-accent" id="btnTriggerTarget">
+                        <i class="fas fa-bolt"></i> Picu Target (85 kg)
+                    </button>
+                    <button class="action-btn action-secondary" id="btnTareBaseline">
+                        <i class="fas fa-undo"></i> Reset ke Baseline (20 kg)
+                    </button>
+                </div>
+
+                <!-- Feedback Toast Notification -->
+                <div id="cameraFeedback" class="feedback-banner hidden" role="status"></div>
+
+                <div class="monitoring-metrics-row">
+                    <div class="metric-box">
+                        <span class="metric-label">Target Ambang Batas</span>
+                        <h3 id="displayTargetThreshold" style="color: #2dd4bf;">85.0 kg</h3>
+                        <small style="color: #94a3b8;">Ambang pemicu motor winch</small>
+                    </div>
+                    <div class="metric-box">
+                        <span class="metric-label">Dukungan Filter Ombak</span>
+                        <h3 id="displayNoiseSuppression" style="color: #00e5d0;">±1.8 kg</h3>
+                        <small style="color: #94a3b8;">Fluktuasi ombak diredam</small>
+                    </div>
+                </div>
+
+                <p class="feature-note">
+                    <i class="fas fa-info-circle"></i> Ketika beban mencapai <strong>85.0 kg</strong> dan stabil selama &ge; 1.5 detik, mikrokontroler ESP32 akan langsung memicu pengangkatan otomatis.
+                </p>
+            </div>
+        </section>
+    </article><!-- END PAGE 3: MONITORING -->
+
+    <!-- ==================== PAGE 4: KONTROL JARING & BAGAN ==================== -->
+    <article class="app-page-view" id="view-kontrol">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Kontrol Jaring & Bagan</span>
+                </div>
+                <h1 class="page-banner-title">Kendali Motor Winch & Mekanisme Bagan</h1>
+                <p class="page-banner-subtitle">Pengangkatan Otomatis Ambang Batas, Penurunan Jaring Manual Terverifikasi, dan Proteksi Limit Switch Mekanis.</p>
+            </div>
+        </div>
+
+        <!-- SPLIT SECTION 2: KONTROL JARING & VISUALISASI MEKANISME ALAT -->
+        <section class="split-section" id="control">
+            <!-- Content Panel -->
+            <div class="split-content bg-purple">
+                <span class="section-tag"><i class="fas fa-sliders-h"></i> KENDALI MOTOR & MEKANISME WINCH</span>
+                <h2>Kontrol Pengangkatan & Penurunan Jaring</h2>
+                <p>
+                    Pengangkatan jaring bekerja secara otomatis saat beban target tercapai. Untuk penurunan jaring kembali ke kolom air perairan, dilakukan secara manual melalui kontrol antarmuka oleh operator bagan demi keselamatan.
+                </p>
+
+                <!-- Motor Winch Status Card -->
+                <div class="hardware-card">
+                    <div class="hardware-info">
+                        <div class="hw-icon" id="motorIcon"><i class="fas fa-cog fa-spin"></i></div>
+                        <div>
+                            <h3>Motor Winch Penggerak</h3>
+                            <p id="motorDescText">Motor DC High-Torque 24V terhubung ke drum penggulung tali utama.</p>
+                            <span id="motorDetailBadge" class="badge-status">Siaga (Standby)</span>
+                        </div>
+                    </div>
+                    <div class="motor-action-toggle">
+                        <span class="auto-mode-badge" id="autoModeBadge"><i class="fas fa-robot"></i> Otomatis: AKTIF</span>
+                    </div>
+                </div>
+
+                <!-- Limit Switch Status Card -->
+                <div class="hardware-card">
+                    <div class="hardware-info">
+                        <div class="hw-icon" id="limitSwitchIcon" style="color: #38bdf8;"><i class="fas fa-toggle-off"></i></div>
+                        <div>
+                            <h3>Limit Switch Pengaman Atas</h3>
+                            <p id="limitSwitchDesc">Mendeteksi rangka jaring saat mencapai platform atas untuk memutus motor.</p>
+                            <span id="limitSwitchBadge" class="badge-status">Terbuka (Standby)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dual Control Buttons -->
+                <div class="dual-btn-group-custom">
+                    <button class="action-btn action-primary" id="btnTestAutoHoist">
+                        <i class="fas fa-play"></i> Uji Otomatisasi (Beban Penuh)
+                    </button>
+                    <button class="action-btn action-secondary" id="btnManualHoist">
+                        <i class="fas fa-arrow-up"></i> Angkat Manual
+                    </button>
+                    <button class="action-btn action-accent" id="btnManualLower">
+                        <i class="fas fa-arrow-down"></i> Turunkan Jaring Manual
+                    </button>
+                    <button class="action-btn action-estop" id="estopActionBtn" title="Hentikan Seketika Seluruh Sistem!">
+                        <i class="fas fa-hand"></i> EMERGENCY STOP
+                    </button>
+                </div>
+
+                <p class="feature-note">
+                    <i class="fas fa-shield-alt"></i> Sakelar batas atas (limit switch) secara fisik memutus arus relay motor seketika saat rangka jaring menyentuh platform, mencegah kelebihan tarikan pada struktur bagan.
+                </p>
+            </div>
+
+            <!-- Visual Bagan Schematic Card -->
+            <div class="split-image bg-ocean-dark">
+                <div class="bagan-schematic-wrapper">
+                    <div class="schematic-header">
+                        <h4><i class="fas fa-drafting-compass"></i> MEKANISME ALAT: 1 MOTOR, 1 WINCH, 1 TALI UTAMA</h4>
+                        <span class="schematic-pill">UNIT BAGAN-01</span>
+                    </div>
+
+                    <!-- Interactive Bagan Illustration Construction -->
+                    <div class="bagan-visual-illustration" id="baganVisualBox">
+                        <!-- Bagan Bamboo Structure Graphic -->
+                        <div class="bagan-platform">
+                            <div class="bamboo-pole pole-left"></div>
+                            <div class="bamboo-pole pole-right"></div>
+                            <div class="bamboo-cross"></div>
+                            
+                            <!-- Water surface line -->
+                            <div class="sea-surface-line">
+                                <span class="sea-label">PERMUKAAN AIR LAUT</span>
+                            </div>
+
+                            <!-- Top Platform Cabin with 1 Motor & 1 Winch Drum -->
+                            <div class="cabin-box-enhanced">
+                                <div class="cabin-title"><i class="fas fa-home"></i> PONDOK BAGAN</div>
+                                <div class="motor-winch-assembly">
+                                    <div class="single-motor-graphic" id="singleMotorGraphic" title="1 Motor Penggerak">
+                                        <i class="fas fa-cog"></i> <span>MOTOR</span>
+                                    </div>
+                                    <div class="single-winch-drum" id="singleWinchDrum" title="1 Winch Penggulung">
+                                        <div class="drum-groove"></div>
+                                        <span>WINCH</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Limit Switch (Top Position Safety) -->
+                            <div class="limit-switch-graphic" id="limitSwitchGraphic" title="Limit Switch Posisi Atas">
+                                <span class="ls-dot" id="lsDot"></span>
+                                <span class="ls-label">LIMIT SWITCH</span>
+                            </div>
+
+                            <!-- 1 Main Hoist Cable (Tali Utama) -->
+                            <div class="single-main-cable" id="singleMainCable">
+                                <!-- Inline Load Cell Sensor with Digital Neon Readout -->
+                                <div class="inline-load-sensor" id="inlineLoadSensor" title="Sensor Beban Tali Utama">
+                                    <div class="load-sensor-body">
+                                        <i class="fas fa-balance-scale"></i>
+                                        <div class="load-sensor-readout">
+                                            <small>LOAD CELL</small>
+                                            <strong id="schematicLoadVal">24.5 kg</strong>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Lower part of the main cable connecting to square spreader frame -->
+                                <div class="main-cable-tail" id="mainCableTail"></div>
+
+                                <!-- Rangka Persegi Pembagi Tarikan (Square Spreader Bridle Frame) -->
+                                <div class="spreader-frame-graphic" id="spreaderFrameGraphic" title="Rangka Persegi Pembagi Tarikan">
+                                    <div class="spreader-bar-h"></div>
+                                    <div class="spreader-joint center"></div>
+                                    <span class="spreader-label">RANGKA PERSEGI PEMBAGI TARIKAN</span>
+
+                                    <!-- 4 Connecting Ropes going down to 4 corners of the net -->
+                                    <div class="four-corner-ropes">
+                                        <div class="rope-corner rope-1"></div>
+                                        <div class="rope-corner rope-2"></div>
+                                        <div class="rope-corner rope-3"></div>
+                                        <div class="rope-corner rope-4"></div>
+                                    </div>
+
+                                    <!-- Net Graphic (Jaring Bagan Tancap) -->
+                                    <div class="net-graphic-bagan" id="schematicNet">
+                                        <div class="net-mesh-pattern"></div>
+                                        <div class="net-fish-silhouettes" id="netFishSilhouettes">
+                                            <span class="fish-dot f1"></span>
+                                            <span class="fish-dot f2"></span>
+                                            <span class="fish-dot f3"></span>
+                                        </div>
+                                        <div class="net-caption">
+                                            <i class="fas fa-network-wired"></i> JARING BAGAN TANCAP
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Schematic Footer Indicators -->
+                    <div class="schematic-footer">
+                        <div class="status-summary-item">
+                            <small>STATUS MOTOR</small>
+                            <strong id="quickMotorStatus" style="color: #38bdf8;">Standby</strong>
+                        </div>
+                        <div class="status-summary-item">
+                            <small>POSISI JARING</small>
+                            <strong id="quickNetPosition" style="color: #00e5d0;">Bawah (Menampung)</strong>
+                        </div>
+                        <div class="status-summary-item">
+                            <small>LIMIT SWITCH</small>
+                            <strong id="quickLimitStatus" style="color: #94a3b8;">Terbuka (Standby)</strong>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="quickAutoDemoBtn">Uji Siklus</button>
+                        <button class="btn btn-secondary btn-sm" id="quickLowerBtn">Turunkan</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </article><!-- END PAGE 4: KONTROL -->
+
+    <!-- ==================== PAGE 5: ANALISIS SISTEM ==================== -->
+    <article class="app-page-view" id="view-analisis">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Analisis Sistem & Produktivitas</span>
+                </div>
+                <h1 class="page-banner-title">Analisis Respons & Kestabilan Otomatisasi</h1>
+                <p class="page-banner-subtitle">Evaluasi Algoritma Penyaringan Ombak Laut dan Akurasi Titik Pemicuan Pengangkatan Bagan Tancap.</p>
+            </div>
+        </div>
+
+        <!-- SPLIT SECTION 3: ANALISIS SISTEM (SYSTEM ANALYTICS & HOIST SUCCESS) -->
+        <section class="split-section" id="analysis">
+            <!-- Visual Container: Interactive SVG Chart -->
+            <div class="split-image bg-ocean-night">
+                <div class="chart-display-card">
+                    <div class="chart-card-header">
+                        <h4><i class="fas fa-chart-line"></i> PROFIL BEBAN: TARGET (85 KG) VS PEMBACAAN AKTUAL</h4>
+                        <span class="chart-pill">ANALISIS PENGUJIAN</span>
+                    </div>
+
+                    <div id="chart" class="chart-canvas-area"></div>
+
+                    <div class="chart-recommendation-box" id="chartRecBox">
+                        <div class="rec-icon"><i class="fas fa-check-double"></i></div>
+                        <div class="rec-text">
+                            <strong>Kinerja Otomatisasi Terverifikasi:</strong>
+                            <p id="recMessage">100% dari 14 siklus pengujian berhasil dipicu oleh ambang batas beban tanpa intervensi manual fisik dan bebas dari kesalahan pemicuan ombak.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Content Panel -->
+            <div class="split-content bg-ocean-teal">
+                <span class="section-tag"><i class="fas fa-microchip"></i> EVALUASI KINERJA SISTEM</span>
+                <h2>Analisis Respons & Kestabilan Otomatisasi</h2>
+                <p>
+                    Data evaluasi dari uji coba operasional bagan tancap. Menunjukkan efektivitas algoritma filter gelombang dalam meredam gangguan lingkungan serta presisi waktu respons motor winch saat target tercapai.
+                </p>
+
+                <div class="metrics-card-grid" id="analysisMetrics">
+                    <div class="analytic-stat-card">
+                        <span class="stat-lbl">Durasi Pengangkatan</span>
+                        <h3 class="stat-val" id="metricDurationVal">18.2 dtk</h3>
+                        <small style="color:#c7ecee;">Rata-rata dari dasar ke atas</small>
+                    </div>
+                    <div class="analytic-stat-card">
+                        <span class="stat-lbl">Waktu Respons ESP32</span>
+                        <h3 class="stat-val" id="metricResponseVal">1.15 dtk</h3>
+                        <small style="color:#c7ecee;">Verifikasi stabilitas beban</small>
+                    </div>
+                    <div class="analytic-stat-card">
+                        <span class="stat-lbl">Tingkat Keberhasilan</span>
+                        <h3 class="stat-val" id="metricSuccessVal">100%</h3>
+                        <small style="color:#c7ecee;">14 / 14 Pengujian Sukses</small>
+                    </div>
+                </div>
+
+                <div class="recent-activities-box">
+                    <h4><i class="fas fa-wave-square"></i> Ringkasan Hasil Pengujian Sistem:</h4>
+                    <div class="analysis-summary-list">
+                        <div class="analysis-item-row">
+                            <i class="fas fa-filter text-accent"></i>
+                            <div>
+                                <strong>Peredaman Gangguan Ombak & Angin:</strong>
+                                <p>186 spike gaya sentak gelombang laut berhasil diredam oleh Moving Average Filter tanpa memicu sakelar motor secara keliru.</p>
+                            </div>
+                        </div>
+                        <div class="analysis-item-row">
+                            <i class="fas fa-stop-circle text-accent"></i>
+                            <div>
+                                <strong>Akurasi Penghentian Limit Switch:</strong>
+                                <p>Toleransi batas atas mekanis terjaga pada simpangan &plusmn;2.5 cm sebelum menyentuh batas kritis struktur pondok bagan.</p>
+                            </div>
+                        </div>
+                        <div class="analysis-item-row">
+                            <i class="fas fa-arrow-down text-accent"></i>
+                            <div>
+                                <strong>Kendali Penurunan Jaring:</strong>
+                                <p>Penurunan manual via perintah antarmuka berhasil dijalankan mulus dengan durasi rata-rata 16.5 detik.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </article><!-- END PAGE 5: ANALISIS -->
+
+
+    <!-- ==================== PAGE 7: RIWAYAT OPERASI ==================== -->
+    <article class="app-page-view" id="view-riwayat">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Riwayat Operasi</span>
+                </div>
+                <h1 class="page-banner-title">Riwayat Pengoperasian Jaring Bagan</h1>
+                <p class="page-banner-subtitle">Catatan Audit Digital Waktu Hauling, Beban Pemicu, Durasi Motor, dan Status Limit Switch.</p>
+            </div>
+        </div>
+
+        <!-- SECTION 4: RIWAYAT OPERASI PENANGKAPAN & PENGANGKATAN JARING -->
+        <section class="history-section" id="history">
+            <div class="history-container">
+                <div class="history-header">
+                    <div>
+                        <span class="section-tag"><i class="fas fa-clipboard-list"></i> LOG OPERASIONAL OTOMATISASI</span>
+                        <h2>Riwayat Pengoperasian Jaring Bagan</h2>
+                        <p>Catatan terperinci waktu pengangkatan jaring, beban pemicu, durasi proses, dan status limit switch.</p>
+                    </div>
+                    <div class="history-btn-group">
+                        <button class="btn btn-primary btn-sm" id="exportCsvBtn">
+                            <i class="fas fa-file-csv"></i> Ekspor CSV
+                        </button>
+                        <button class="btn btn-secondary btn-sm" id="clearHistoryBtn">
+                            <i class="fas fa-trash-alt"></i> Bersihkan Log
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-wrap-glass">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">No.</th>
+                                <th scope="col">Waktu Operasi</th>
+                                <th scope="col">Beban Pemicu</th>
+                                <th scope="col">Mode Pemicu</th>
+                                <th scope="col">Durasi Angkat</th>
+                                <th scope="col">Status Limit Switch</th>
+                                <th scope="col">Hasil Pengangkatan</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </article><!-- END PAGE 7: RIWAYAT -->
+
+    <!-- ==================== PAGE 8: PENGATURAN & KALIBRASI ==================== -->
+    <article class="app-page-view" id="view-pengaturan">
+        <!-- Page Banner Header -->
+        <div class="page-banner-header">
+            <div class="page-banner-container">
+                <div class="page-breadcrumbs">
+                    <a href="#/beranda" data-page="beranda"><i class="fas fa-home"></i> Beranda</a>
+                    <span class="crumb-separator"><i class="fas fa-chevron-right"></i></span>
+                    <span class="crumb-current">Pengaturan & Kalibrasi</span>
+                </div>
+                <h1 class="page-banner-title">Pengaturan Ambang Batas & Kalibrasi</h1>
+                <p class="page-banner-subtitle">Kalibrasi Titik Tara Jaring Kosong, Threshold Pemicu Motor, Filter Ombak, dan Komunikasi ESP32.</p>
+            </div>
+        </div>
+
+        <!-- SECTION 5: PENGATURAN AMBANG BATAS & KALIBRASI SENSOR -->
+        <section class="settings-section" id="settings">
+            <div class="settings-container">
+                <div class="settings-header">
+                    <span class="section-tag"><i class="fas fa-sliders-h"></i> PARAMETER SISTEM & ESP32</span>
+                    <h2>Pengaturan Ambang Batas & Kalibrasi Sensor</h2>
+                    <p>Sesuaikan parameter pemicu otomatisasi, tara jaring kosong, dan toleransi penyaringan ombak laut.</p>
+                </div>
+
+                <div class="settings-grid">
+                    <!-- Setting Card 1: Ambang Batas Pemicu -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <i class="fas fa-balance-scale"></i>
+                            <h3>Ambang Batas Pemicu (Target Threshold)</h3>
+                        </div>
+                        <p class="settings-desc">Beban total tali utama yang diperlukan agar mikrokontroler memicu motor winch menggulung jaring.</p>
+                        <div class="setting-control-row">
+                            <input type="range" id="inputTargetThreshold" min="40" max="150" step="5" value="85" class="range-slider-modern">
+                            <span class="setting-val-badge" id="badgeTargetThreshold">85 kg</span>
+                        </div>
+                        <small class="setting-hint">Rekomendasi: 80 - 100 kg untuk bagan tancap standar Teluk Banten.</small>
+                    </div>
+
+                    <!-- Setting Card 2: Kalibrasi Baseline (Tara) -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <i class="fas fa-anchor"></i>
+                            <h3>Kalibrasi Baseline Tara Jaring</h3>
+                        </div>
+                        <p class="settings-desc">Berat jaring kosong saat terendam di dalam air laut (dead weight + gesekan air).</p>
+                        <div class="setting-control-row">
+                            <input type="range" id="inputBaselineTare" min="10" max="40" step="1" value="20" class="range-slider-modern">
+                            <span class="setting-val-badge" id="badgeBaselineTare">20 kg</span>
+                        </div>
+                        <small class="setting-hint">Tekan kalibrasi saat jaring terbentang tanpa ikan untuk reset titik nol.</small>
+                    </div>
+
+                    <!-- Setting Card 3: Filter Kestabilan Ombak -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <i class="fas fa-wave-square"></i>
+                            <h3>Parameter Filter Kestabilan Ombak</h3>
+                        </div>
+                        <p class="settings-desc">Jendela sampel rata-rata bergerak (Moving Average Window) untuk meredam kebisingan ombak.</p>
+                        <div class="setting-control-row">
+                            <input type="range" id="inputFilterWindow" min="5" max="30" step="1" value="15" class="range-slider-modern">
+                            <span class="setting-val-badge" id="badgeFilterWindow">15 Sampel (1.5 dtk)</span>
+                        </div>
+                        <small class="setting-hint">Semakin besar jendela, semakin tahan terhadap gelombang besar namun respons sedikit lebih lambat.</small>
+                    </div>
+
+                    <!-- Setting Card 4: Konektivitas ESP32 -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <i class="fas fa-network-wired"></i>
+                            <h3>Konfigurasi Komunikasi ESP32</h3>
+                        </div>
+                        <p class="settings-desc">Alamat IP gateway komunikasi perangkat mikrokontroler di bagan tancap.</p>
+                        <div class="esp32-settings-inputs">
+                            <div class="input-inline">
+                                <label for="inputEspIp">IP Gateway ESP32:</label>
+                                <input type="text" id="inputEspIp" value="192.168.4.1" class="text-input-modern">
+                            </div>
+                            <div class="input-inline">
+                                <label for="inputBaudRate">Baud Rate Serial:</label>
+                                <select id="inputBaudRate" class="select-modern">
+                                    <option value="115200" selected>115200 bps</option>
+                                    <option value="9600">9600 bps</option>
+                                    <option value="57600">57600 bps</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-btn-row">
+                            <button class="btn btn-primary btn-sm" id="btnSaveSettings">
+                                <i class="fas fa-save"></i> Simpan Parameter
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </article><!-- END PAGE 8: PENGATURAN -->
+
+    <!-- FOOTER -->
+    <footer class="footer-modern">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <div class="footer-logo">
+                    <img src="/assets/aistudio/Baganova_Maritime_Tech_Logo_adc8bd3e.png" alt="Logo BAGANOVA" class="footer-logo-img">
+                    <div class="footer-brand-title">
+                        <h3>BAGANOVA</h3>
+                        <small>Smart Automated Bagan System</small>
+                    </div>
+                </div>
+                <p>
+                    Sistem Otomatisasi Pengangkatan Jaring Bagan Tancap Berbasis Sensor Beban dan Kendali Motor ESP32.
+                </p>
+                <div class="system-status-indicator">
+                    <span class="status-dot"></span>
+                    <span id="footerTelemetryStatus">ESP32: Mode Simulasi Aktif (Siap Uji)</span>
+                </div>
+            </div>
+
+            <div class="footer-links">
+                <h4>Navigasi Halaman</h4>
+                <ul>
+                    <li><a href="#/beranda" data-page="beranda">Beranda</a></li>
+                    <li><a href="#/tentang" data-page="tentang">Tentang Kami</a></li>
+                    <li><a href="#/monitoring" data-page="monitoring">Monitoring Beban</a></li>
+                    <li><a href="#/kontrol" data-page="kontrol">Kontrol Jaring & Bagan</a></li>
+                    <li><a href="#/analisis" data-page="analisis">Analisis Sistem</a></li>
+                    <li><a href="#/riwayat" data-page="riwayat">Riwayat Operasi</a></li>
+                    <li><a href="#/pengaturan" data-page="pengaturan">Pengaturan & Kalibrasi</a></li>
+                </ul>
+            </div>
+
+            <div class="footer-contact">
+                <h4>Pusat Operasional Bagan</h4>
+                <p><i class="fas fa-anchor"></i> Unit: Bagan Tancap 01 (Otomatis)</p>
+                <p><i class="fas fa-map-marker-alt"></i> Wilayah Operasi: Teluk Banten</p>
+                <p><i class="fas fa-microchip"></i> Mikrokontroler: ESP32 & Firebase Realtime DB</p>
+            </div>
+        </div>
+
+        <div class="footer-bottom">
+            <p>&copy; 2026 BAGANOVA — Smart Monitoring System. Hak cipta dilindungi undang-undang.</p>
+            <div class="footer-tags">
+                <span>Smart Bagan</span> · <span>Sensor Berat Load Cell</span> · <span>Motor DC Gearbox 12V</span> · <span>Firebase Realtime DB</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ==================== MODAL 1: EDIT / UNGGAH FOTO ANGGOTA TIM ==================== -->
+    <div class="baganova-modal-backdrop hidden" id="teamEditModal">
+        <div class="baganova-modal-box">
+            <div class="modal-header">
+                <h3><i class="fas fa-user-edit text-accent"></i> Kelola Identitas & Foto Kelompok</h3>
+                <button class="modal-close-btn" id="btnCloseTeamModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group-custom">
+                    <label for="selectTeamMember"><i class="fas fa-list"></i> Pilih Anggota yang Ingin Diedit:</label>
+                    <select id="selectTeamMember" class="select-modern">
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+
+                <div class="photo-upload-container">
+                    <div class="photo-preview-box" id="memberPhotoPreview">
+                        <i class="fas fa-user text-accent fa-2x"></i>
+                    </div>
+                    <div style="flex: 1;">
+                        <label style="display: block; font-weight: 700; margin-bottom: 4px; font-size: 0.85rem;">
+                            <i class="fas fa-camera"></i> Unggah Foto Profil (JPG/PNG):
+                        </label>
+                        <input type="file" id="inputMemberPhoto" accept="image/*" class="text-input-modern" style="padding: 6px;">
+                        <small style="display: block; color: var(--text-secondary); margin-top: 4px; font-size: 0.75rem;">
+                            Foto disimpan lokal di browser laptop/HP dan tampil langsung di kartu profil.
+                        </small>
+                    </div>
+                </div>
+
+                <div class="form-group-custom">
+                    <label for="inputMemberName"><i class="fas fa-id-card"></i> Nama Lengkap:</label>
+                    <input type="text" id="inputMemberName" class="text-input-modern" placeholder="Contoh: Syifa Dwi Fitria">
+                </div>
+
+                <div class="form-group-custom">
+                    <label for="inputMemberNim"><i class="fas fa-hashtag"></i> Nomor Induk Mahasiswa (NIM):</label>
+                    <input type="text" id="inputMemberNim" class="text-input-modern" placeholder="Contoh: 2201945">
+                </div>
+
+                <div class="form-group-custom">
+                    <label for="inputMemberRole"><i class="fas fa-briefcase"></i> Peran / Tugas Proyek:</label>
+                    <input type="text" id="inputMemberRole" class="text-input-modern" placeholder="Contoh: Ketua Tim & Sistem Rekayasa IoT">
+                </div>
+
+                <div class="form-group-custom">
+                    <label for="inputMemberAffil"><i class="fas fa-university"></i> Program Studi & Instansi:</label>
+                    <input type="text" id="inputMemberAffil" class="text-input-modern" value="Sistem Informasi Kelautan — UPI Kampus Serang">
+                </div>
+
+                <div class="form-group-custom">
+                    <label for="inputMemberExpertise"><i class="fas fa-star"></i> Deskripsi Keahlian / Kontribusi:</label>
+                    <textarea id="inputMemberExpertise" class="text-input-modern" rows="2" placeholder="Deskripsi singkat kontribusi dalam perancangan sistem BAGANOVA..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" id="btnCancelTeamModal">Batal</button>
+                <button class="btn btn-primary btn-sm" id="btnSaveTeamMember">
+                    <i class="fas fa-check"></i> Simpan Perubahan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+</body>
+</html>

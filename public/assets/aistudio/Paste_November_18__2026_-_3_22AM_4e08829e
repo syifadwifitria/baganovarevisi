@@ -1,0 +1,1145 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * BAGANOVA — Dashboard Khusus Nelayan (Fisherman Mode) — REVISI
+ * Prinsip: satu layar, tulisan besar, bahasa sehari-hari, tombol darurat selalu terlihat.
+ */
+
+import React, { useState } from 'react';
+import { useBagan } from '../../context/BaganContext';
+import { ScrollSlide } from '../common/ScrollSlide';
+
+const FONT_MONO = "'JetBrains Mono', monospace";
+
+export const FishermanDashboard: React.FC = () => {
+  const {
+    currentUser,
+    activeBagan,
+    updateBagan,
+    updateTargetThreshold,
+    updateBaselineTare,
+    addFishWeight,
+    triggerTargetLoad,
+    startAutoHoist,
+    startLowerNet,
+    triggerEStop,
+    resetEStop,
+    ecosystemIntel,
+    catchLogs,
+    setCurrentView,
+    logout
+  } = useBagan();
+
+  const [confirmLowerOpen, setConfirmLowerOpen] = useState(false);
+  const [testModeOpen, setTestModeOpen] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [tarePanelOpen, setTarePanelOpen] = useState(false);
+
+  const handleBaselineTareChange = (val: number) => {
+    const clamped = Math.max(5, Math.min(60, Math.round(val * 2) / 2));
+    updateBaselineTare(clamped);
+  };
+
+  const handleThresholdChange = (val: number) => {
+    const clamped = Math.max(30, Math.min(250, Math.round(val / 5) * 5));
+    updateTargetThreshold(clamped);
+  };
+
+  const { loadSensor, winch, history } = activeBagan;
+  const currentKg = loadSensor.currentFiltered;
+  const targetKg = loadSensor.targetThreshold.toFixed(0);
+  const netEmptyKg = loadSensor.baselineTare.toFixed(1);
+
+  const fishWeightKg = Math.max(
+    0,
+    currentKg - loadSensor.baselineTare
+  );
+
+  const loadPercentage = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round((currentKg / loadSensor.targetThreshold) * 100)
+    )
+  );
+
+  const isRaising = winch.motorState === 'raising';
+  const isLowering = winch.motorState === 'lowering';
+  const isMoving = isRaising || isLowering;
+  const isAtTop = winch.netPosition === 'top';
+  const isAtBottom = winch.netPosition === 'bottom';
+  const isEStop = winch.motorState === 'estop';
+
+  const isOnline = activeBagan.status !== 'offline';
+  const lowBattery = activeBagan.batteryVoltage > 0 && activeBagan.batteryVoltage < 12.2;
+
+  // ---- Status utama: satu kalimat pendek + warna ----
+  let statusText = 'Jaring di bawah, menunggu ikan masuk';
+  let statusIcon = 'fa-water';
+  let statusColor = '#38bdf8';
+  if (!isOnline) {
+    statusText = 'Alat tidak terhubung. Angka di layar mungkin sudah lama';
+    statusIcon = 'fa-wifi';
+    statusColor = 'var(--status-warn-text)';
+  } else if (isEStop) {
+    statusText = 'DARURAT! Mesin dimatikan';
+    statusIcon = 'fa-exclamation-triangle';
+    statusColor = '#ef4444';
+  } else if (isRaising) {
+    statusText = 'Mesin sedang menaikkan jaring…';
+    statusIcon = 'fa-arrow-up';
+    statusColor = '#00e5d0';
+  } else if (isLowering) {
+    statusText = 'Mesin sedang menurunkan jaring…';
+    statusIcon = 'fa-arrow-down';
+    statusColor = '#38bdf8';
+  } else if (isAtTop) {
+    statusText = 'Jaring sudah di atas. Silakan serok ikan!';
+    statusIcon = 'fa-check-circle';
+    statusColor = '#10b981';
+  }
+
+  // ---- Alasan tombol "Naikkan" & "Turunkan" tidak aktif (ditampilkan di layar) ----
+  const raiseDisabled = isMoving || isEStop || isAtTop;
+  let raiseReason = '';
+  if (isEStop) raiseReason = 'Lepas tombol darurat dulu';
+  else if (isMoving) raiseReason = 'Tunggu mesin berhenti';
+  else if (isAtTop) raiseReason = 'Jaring sudah di atas';
+
+  const lowerDisabled = isMoving || isEStop || !isAtTop;
+  let lowerReason = '';
+  if (isEStop) lowerReason = 'Lepas tombol darurat dulu';
+  else if (isMoving) lowerReason = 'Tunggu mesin berhenti';
+  else if (isAtBottom) lowerReason = 'Jaring sudah di dalam air';
+  else if (!isAtTop) lowerReason = 'Tunggu jaring sampai di atas';
+
+  const handleConfirmLower = () => {
+    setConfirmLowerOpen(false);
+    startLowerNet();
+  };
+
+  const toggleAuto = () => {
+    updateBagan(activeBagan.id, { winch: { ...winch, autoMode: !winch.autoMode } });
+  };
+
+  const visibleHistory = showAllHistory ? history.slice(0, 10) : history.slice(0, 3);
+
+  const card: React.CSSProperties = {
+    background: 'var(--card-bg)',
+    border: '1px solid var(--card-border)',
+    borderRadius: '20px',
+    padding: '18px',
+    marginBottom: '16px'
+  };
+
+  return (
+    <div style={{ maxWidth: '820px', margin: '0 auto', padding: '1rem 1rem 3rem 1rem' }}>
+      {/* ===== Bar atas ringkas ===== */}
+      <ScrollSlide y={20}>
+      <div
+        style={{
+          ...card,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '10px'
+        }}
+      >
+        <div>
+          <h2 style={{ fontSize: '1.3rem', margin: 0, color: 'var(--text-primary)' }}>
+            Halo, {currentUser?.fullName || 'Pak Nelayan'} 👋
+          </h2>
+          <div style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+            <i className="fas fa-map-marker-alt" style={{ color: 'var(--primary)' }}></i>{' '}
+            {activeBagan.name} · {activeBagan.location}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: '20px',
+              background: isOnline
+                ? 'var(--status-ok-bg)'
+                : 'var(--status-danger-bg)',
+              border: `1.5px solid ${
+                isOnline
+                  ? 'var(--status-ok-border)'
+                  : 'var(--status-danger-border)'
+              }`,
+              color: isOnline
+                ? 'var(--status-ok-text)'
+                : 'var(--status-danger-text)',
+              fontSize: '0.95rem',
+              fontWeight: 700
+            }}
+          >
+            <i
+              className={`fas ${
+                isOnline ? 'fa-wifi' : 'fa-exclamation-circle'
+              }`}
+            ></i>
+            {isOnline ? 'Alat Terhubung' : 'Alat Terputus'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-logout-header"
+            onClick={logout}
+            style={{ padding: '10px 14px', fontSize: '0.95rem', minHeight: '44px' }}
+          >
+            <i className="fas fa-sign-out-alt"></i> Keluar
+          </button>
+        </div>
+      </div>
+      </ScrollSlide>
+
+
+      {!isOnline && (
+        <div
+          role="alert"
+          style={{
+            ...card,
+            background: 'var(--status-warn-bg)',
+            border: '2px solid var(--status-warn-border)',
+            color: 'var(--status-warn-text)',
+            fontSize: '1rem',
+            fontWeight: 700
+          }}
+        >
+          <i className="fas fa-exclamation-triangle"></i> Sinyal alat hilang. Jangan andalkan angka di
+          layar. Periksa alat langsung di bagan.
+        </div>
+      )}
+
+      {lowBattery && (
+        <div
+          role="alert"
+          style={{
+            ...card,
+            background: 'var(--status-warn-bg)',
+            border: '2px solid var(--status-warn-border)',
+            color: 'var(--status-warn-text)',
+            fontSize: '1rem',
+            fontWeight: 700
+          }}
+        >
+          <i className="fas fa-car-battery"></i> Aki hampir lemah ({activeBagan.batteryVoltage} V).
+          Segera isi atau ganti aki.
+        </div>
+      )}
+
+      {/* ===== Meter beban + status ===== */}
+      <ScrollSlide delay={0.06} y={24}>
+      <div
+        style={{
+          background: 'linear-gradient(135deg, #06213e, #0a3663)',
+          border: `2px solid ${statusColor}`,
+          borderRadius: '24px',
+          padding: '22px 16px',
+          textAlign: 'center',
+          marginBottom: '16px',
+          boxShadow: '0 14px 36px rgba(2, 12, 27, 0.22)'
+        }}
+      >
+        <div style={{ fontSize: '1rem', fontWeight: 800, color: '#bae6fd' }}>
+          <i className="fas fa-weight-hanging"></i> BERAT TOTAL TERUKUR
+        </div>
+
+        <div
+          style={{
+            fontSize: 'clamp(3.4rem, 12vw, 5.4rem)',
+            fontWeight: 900,
+            fontFamily: FONT_MONO,
+            color: '#ffffff',
+            lineHeight: 1.05,
+            margin: '8px 0 14px 0',
+            opacity: isOnline ? 1 : 0.45
+          }}
+        >
+          {currentKg.toFixed(1)} <span style={{ fontSize: '1.8rem', color: '#00e5d0' }}>kg</span>
+        </div>
+
+        <div style={{ maxWidth: '500px', margin: '0 auto 14px auto' }}>
+          <div
+            style={{
+              height: '20px',
+              background: 'rgba(255,255,255,0.12)',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              border: '1px solid rgba(255,255,255,0.25)'
+            }}
+          >
+            <div
+              style={{
+                width: `${loadPercentage}%`,
+                height: '100%',
+                background:
+                  loadPercentage >= 100
+                    ? 'linear-gradient(90deg, #10b981, #34d399)'
+                    : 'linear-gradient(90deg, #0284c7, #00e5d0)',
+                transition: 'width 0.4s ease'
+              }}
+            />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: '0.95rem',
+              color: '#e2e8f0',
+              marginTop: '8px',
+              gap: '8px',
+              flexWrap: 'wrap'
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setTarePanelOpen((prev) => !prev)}
+              style={{
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.22)',
+                borderRadius: '8px',
+                padding: '2px 8px',
+                color: '#e2e8f0',
+                fontSize: '0.88rem',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+              title="Sesuaikan berat jaring kosong bagan Anda"
+            >
+              <span>Jaring kosong: {netEmptyKg} kg</span>
+              <i className="fas fa-pen" style={{ fontSize: '0.72rem', color: '#5eead4' }}></i>
+            </button>
+            <span>
+              Ikan: <strong style={{ color: '#5eead4' }}>{fishWeightKg.toFixed(1)} kg</strong>
+            </span>
+            <span>
+              Target total: <strong>{targetKg} kg</strong>
+            </span>
+          </div>
+        </div>
+
+        <div
+          role="status"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '10px',
+            padding: '12px 16px',
+            borderRadius: '16px',
+            background: 'rgba(6, 20, 40, 0.75)',
+            border: `2px solid ${statusColor}`,
+            fontSize: '1.1rem',
+            color: '#ffffff',
+            fontWeight: 800,
+            lineHeight: 1.35
+          }}
+        >
+          <i className={`fas ${statusIcon} ${isMoving ? 'fa-beat' : ''}`} style={{ color: statusColor }}></i>
+          <span>{statusText}</span>
+        </div>
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Status Cuaca Melaut & Logbook Tangkapan Nelayan ===== */}
+      <ScrollSlide delay={0.05} y={24}>
+      <div style={{ ...card }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '10px',
+            marginBottom: '10px'
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 700 }}>
+              Info Cuaca Melaut &amp; Fase Bulan ({ecosystemIntel?.stationLabel || 'Karangantu'})
+            </div>
+            <h3 style={{ fontSize: '1.15rem', margin: '2px 0 0 0', color: 'var(--text-primary)', fontWeight: 800 }}>
+              {ecosystemIntel ? ecosystemIntel.aiDecision.status : 'Memeriksa Cuaca...'}
+            </h3>
+          </div>
+          <span
+            style={{
+              padding: '6px 12px',
+              borderRadius: '10px',
+              fontFamily: FONT_MONO,
+              fontSize: '0.88rem',
+              fontWeight: 800,
+              background:
+                ecosystemIntel?.aiDecision.status === 'TUNDA MELAUT'
+                  ? 'var(--status-danger-bg)'
+                  : ecosystemIntel?.aiDecision.status === 'WASPADA CUACA'
+                  ? 'var(--status-warn-bg)'
+                  : 'var(--status-ok-bg)',
+              color:
+                ecosystemIntel?.aiDecision.status === 'TUNDA MELAUT'
+                  ? 'var(--status-danger-text)'
+                  : ecosystemIntel?.aiDecision.status === 'WASPADA CUACA'
+                  ? 'var(--status-warn-text)'
+                  : 'var(--status-ok-text)',
+              border: `1px solid ${
+                ecosystemIntel?.aiDecision.status === 'TUNDA MELAUT'
+                  ? 'var(--status-danger-border)'
+                  : ecosystemIntel?.aiDecision.status === 'WASPADA CUACA'
+                  ? 'var(--status-warn-border)'
+                  : 'var(--status-ok-border)'
+              }`
+            }}
+          >
+            {ecosystemIntel
+              ? `Ombak ${ecosystemIntel.marine.waveHeightM.toFixed(2)}m · Angin ${ecosystemIntel.weather.windSpeedKnots.toFixed(0)}kt`
+              : 'Sinkronisasi...'}
+          </span>
+        </div>
+
+        <p style={{ margin: '0 0 12px 0', fontSize: '0.94rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          {ecosystemIntel
+            ? `${ecosystemIntel.aiDecision.summaryForFisherman} Fase bulan saat ini: ${ecosystemIntel.lunar.phaseName} (${ecosystemIntel.lunar.attractantEfficiency} untuk lampu bagan).`
+            : 'Menyiapkan prakiraan cuaca perairan dan status fase bulan malam ini...'}
+        </p>
+
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setCurrentView('fisheries')}
+            style={{ flex: '1 1 220px', minHeight: '48px', fontSize: '0.96rem' }}
+          >
+            <i className="fas fa-clipboard-list"></i> Buka Cuaca &amp; Catat Tangkapan ({catchLogs.filter((l) => l.baganId === activeBagan.id).length})
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setCurrentView('timo-ai')}
+            style={{ flex: '0 1 auto', minHeight: '48px', fontSize: '0.94rem' }}
+          >
+            <i className="fas fa-robot"></i> Tanya TIMO AI
+          </button>
+        </div>
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Pengaturan Maksimal Berat Tangkapan oleh Nelayan ===== */}
+      <ScrollSlide delay={0.05} y={26}>
+      <div style={{ ...card }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: '14px',
+            flexWrap: 'wrap',
+            gap: '8px'
+          }}
+        >
+          <div>
+            <h3
+              style={{
+                fontSize: '1.15rem',
+                margin: 0,
+                color: 'var(--text-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: 800
+              }}
+            >
+              <i className="fas fa-sliders-h" style={{ color: 'var(--primary)' }}></i>
+              Atur Maksimal Berat Ikan
+            </h3>
+            <p
+              style={{
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)',
+                margin: '4px 0 0 0',
+                lineHeight: 1.4
+              }}
+            >
+              Tentukan berapa kg ikan di jaring sebelum mesin mengangkat otomatis.
+            </p>
+          </div>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '20px',
+              background: 'rgba(0, 229, 208, 0.12)',
+              border: '1.5px solid var(--primary)',
+              color: 'var(--primary)',
+              fontSize: '0.9rem',
+              fontWeight: 800
+            }}
+          >
+            <i className="fas fa-check-circle"></i> Target: {targetKg} kg
+          </span>
+        </div>
+
+        {/* Kotak Angka Besar & Tombol +/- 5 kg */}
+        <div
+          style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--card-border)',
+            borderRadius: '16px',
+            padding: '14px 16px',
+            marginBottom: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}
+        >
+          <div>
+            <span
+              style={{
+                fontSize: '0.85rem',
+                color: 'var(--text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                fontWeight: 700,
+                display: 'block'
+              }}
+            >
+              Batas Beban Pengangkatan
+            </span>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '2px' }}>
+              <span
+                style={{
+                  fontSize: 'clamp(2.2rem, 7vw, 2.8rem)',
+                  fontWeight: 900,
+                  fontFamily: FONT_MONO,
+                  color: 'var(--text-primary)',
+                  lineHeight: 1
+                }}
+              >
+                {targetKg}
+              </span>
+              <span style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--primary)' }}>kg</span>
+            </div>
+          </div>
+
+          {/* Tombol Stepper besar ramah layar sentuh */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => handleThresholdChange(loadSensor.targetThreshold - 5)}
+              disabled={isMoving || isEStop || loadSensor.targetThreshold <= 30}
+              style={{
+                minWidth: '64px',
+                minHeight: '52px',
+                padding: '8px 12px',
+                borderRadius: '14px',
+                border: '1.5px solid var(--card-border)',
+                background: 'var(--card-bg)',
+                color: 'var(--text-primary)',
+                fontSize: '1.1rem',
+                fontWeight: 800,
+                cursor: isMoving || isEStop || loadSensor.targetThreshold <= 30 ? 'not-allowed' : 'pointer',
+                opacity: isMoving || isEStop || loadSensor.targetThreshold <= 30 ? 0.35 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease'
+              }}
+              title="Kurangi 5 kg"
+              aria-label="Kurangi target 5 kg"
+            >
+              <i className="fas fa-minus"></i>
+              <span style={{ fontSize: '0.85rem' }}>5 kg</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleThresholdChange(loadSensor.targetThreshold + 5)}
+              disabled={isMoving || isEStop || loadSensor.targetThreshold >= 250}
+              style={{
+                minWidth: '64px',
+                minHeight: '52px',
+                padding: '8px 12px',
+                borderRadius: '14px',
+                border: '1.5px solid var(--primary)',
+                background: 'rgba(0, 229, 208, 0.14)',
+                color: 'var(--primary)',
+                fontSize: '1.1rem',
+                fontWeight: 800,
+                cursor: isMoving || isEStop || loadSensor.targetThreshold >= 250 ? 'not-allowed' : 'pointer',
+                opacity: isMoving || isEStop || loadSensor.targetThreshold >= 250 ? 0.35 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease'
+              }}
+              title="Tambah 5 kg"
+              aria-label="Tambah target 5 kg"
+            >
+              <i className="fas fa-plus"></i>
+              <span style={{ fontSize: '0.85rem' }}>5 kg</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Geser batas berat (Slider) */}
+        <div style={{ marginBottom: '16px' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+              marginBottom: '6px',
+              fontWeight: 600
+            }}
+          >
+            <span>Min: 30 kg</span>
+            <span style={{ color: 'var(--primary)', fontWeight: 700 }}>Geser untuk atur cepat</span>
+            <span>Max: 250 kg</span>
+          </div>
+          <input
+            type="range"
+            min="30"
+            max="250"
+            step="5"
+            value={loadSensor.targetThreshold}
+            onChange={(e) => handleThresholdChange(Number(e.target.value))}
+            disabled={isMoving || isEStop}
+            style={{
+              width: '100%',
+              height: '10px',
+              borderRadius: '8px',
+              cursor: isMoving || isEStop ? 'not-allowed' : 'pointer',
+              accentColor: 'var(--primary)'
+            }}
+            aria-label="Pengatur batas maksimal berat tangkapan"
+          />
+        </div>
+
+        {/* Kalibrasi Berat Jaring Kosong (Tara) untuk Nelayan */}
+        <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--card-border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '0.94rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                Berat Jaring Kosong (Tara):{' '}
+                <span style={{ fontFamily: FONT_MONO, color: 'var(--primary)' }}>{netEmptyKg} kg</span>
+              </div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                Otomatis terbaca alat saat jaring turun kosong, atau sesuaikan manual sesuai ukuran jaring bagan Anda.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setTarePanelOpen((prev) => !prev)}
+              disabled={isMoving || isEStop}
+              style={{ minHeight: '40px', whiteSpace: 'nowrap' }}
+            >
+              <i className={`fas ${tarePanelOpen ? 'fa-chevron-up' : 'fa-sliders-h'}`}></i>{' '}
+              {tarePanelOpen ? 'Tutup' : 'Sesuaikan Jaring'}
+            </button>
+          </div>
+
+          {tarePanelOpen && (
+            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed var(--card-border)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleBaselineTareChange(loadSensor.baselineTare - 1)}
+                    disabled={isMoving || isEStop || loadSensor.baselineTare <= 5}
+                    style={{
+                      minWidth: '52px',
+                      minHeight: '44px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--card-border)',
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    -1 kg
+                  </button>
+                  <span style={{ minWidth: '80px', textAlign: 'center', fontFamily: FONT_MONO, fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-primary)' }}>
+                    {netEmptyKg} kg
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleBaselineTareChange(loadSensor.baselineTare + 1)}
+                    disabled={isMoving || isEStop || loadSensor.baselineTare >= 60}
+                    style={{
+                      minWidth: '52px',
+                      minHeight: '44px',
+                      borderRadius: '10px',
+                      border: '1px solid var(--primary)',
+                      background: 'var(--status-info-bg)',
+                      color: 'var(--primary)',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    +1 kg
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleBaselineTareChange(currentKg)}
+                  disabled={isMoving || isEStop}
+                  style={{ minHeight: '44px', whiteSpace: 'nowrap' }}
+                >
+                  <i className="fas fa-crosshairs"></i> Set Pembacaan Sekarang ({currentKg.toFixed(1)} kg) = Jaring Kosong
+                </button>
+              </div>
+
+              <input
+                type="range"
+                min="5"
+                max="60"
+                step="0.5"
+                value={loadSensor.baselineTare}
+                onChange={(e) => handleBaselineTareChange(Number(e.target.value))}
+                disabled={isMoving || isEStop}
+                style={{
+                  width: '100%',
+                  height: '8px',
+                  borderRadius: '8px',
+                  cursor: isMoving || isEStop ? 'not-allowed' : 'pointer',
+                  accentColor: 'var(--primary)'
+                }}
+                aria-label="Atur berat jaring kosong (tara)"
+              />
+            </div>
+          )}
+        </div>
+
+        {isMoving && (
+          <div
+            style={{
+              marginTop: '10px',
+              padding: '8px 12px',
+              borderRadius: '10px',
+              background: 'var(--status-warn-bg)',
+              border: '1px solid var(--status-warn-border)',
+              color: 'var(--status-warn-text)',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <i className="fas fa-info-circle"></i> Mesin winch sedang aktif bergerak. Pengaturan target ditahan sementara sampai jaring berhenti.
+          </div>
+        )}
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Aksi utama ===== */}
+      <ScrollSlide delay={0.05} y={26}>
+      <div style={{ ...card }}>
+        {/* Sakelar Otomatis / Manual */}
+        <button
+          type="button"
+          onClick={toggleAuto}
+          disabled={isEStop}
+          aria-pressed={winch.autoMode}
+          style={{
+            width: '100%',
+            minHeight: '64px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            padding: '12px 16px',
+            marginBottom: '14px',
+            borderRadius: '16px',
+            border: `2px solid ${winch.autoMode ? '#10b981' : '#94a3b8'}`,
+            background: winch.autoMode ? 'rgba(16,185,129,0.15)' : 'rgba(148,163,184,0.12)',
+            color: 'var(--text-primary)',
+            cursor: isEStop ? 'not-allowed' : 'pointer',
+            opacity: isEStop ? 0.5 : 1,
+            textAlign: 'left'
+          }}
+        >
+          <span>
+            <strong style={{ fontSize: '1.1rem', display: 'block' }}>
+              Naik otomatis: {winch.autoMode ? 'HIDUP' : 'MATI'}
+            </strong>
+            <span style={{ fontSize: '0.95rem', color: 'var(--text-secondary)' }}>
+              {winch.autoMode
+                ? `Jaring naik sendiri saat tangkapan ${targetKg} kg`
+                : 'Jaring tidak akan naik sendiri'}
+            </span>
+          </span>
+          <i
+            className={`fas ${winch.autoMode ? 'fa-toggle-on' : 'fa-toggle-off'}`}
+            style={{ fontSize: '2.4rem', color: winch.autoMode ? '#10b981' : '#94a3b8' }}
+          ></i>
+        </button>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: '12px'
+          }}
+        >
+          {/* Naikkan jaring manual */}
+          <button
+            type="button"
+            onClick={() => startAutoHoist('Manual Nelayan')}
+            disabled={raiseDisabled}
+            style={{
+              width: '100%',
+              minHeight: '88px',
+              padding: '12px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              borderRadius: '18px',
+              border: `2px solid ${raiseDisabled ? 'var(--card-disabled-border)' : '#00e5d0'}`,
+              background: raiseDisabled
+                ? 'var(--card-disabled-bg)'
+                : 'linear-gradient(135deg, #0f766e, #0284c7)',
+              color: raiseDisabled ? 'var(--card-disabled-text)' : '#ffffff',
+              fontSize: '1.22rem',
+              fontWeight: 900,
+              cursor: raiseDisabled ? 'not-allowed' : 'pointer',
+              opacity: raiseDisabled ? 0.92 : 1,
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <span>
+              <i className="fas fa-arrow-up"></i> NAIKKAN JARING
+            </span>
+            <small style={{ fontSize: '0.88rem', fontWeight: 600, color: raiseDisabled ? 'var(--text-secondary)' : '#ccfbf1' }}>
+              {raiseDisabled ? raiseReason : 'Klik untuk angkat jaring manual'}
+            </small>
+          </button>
+
+          {/* Turunkan jaring */}
+          <button
+            type="button"
+            onClick={() => setConfirmLowerOpen(true)}
+            disabled={lowerDisabled}
+            style={{
+              width: '100%',
+              minHeight: '88px',
+              padding: '12px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              borderRadius: '18px',
+              border: `2px solid ${lowerDisabled ? 'var(--card-disabled-border)' : '#38bdf8'}`,
+              background: lowerDisabled
+                ? 'var(--card-disabled-bg)'
+                : 'linear-gradient(135deg, #0284c7, #034078)',
+              color: lowerDisabled ? 'var(--card-disabled-text)' : '#ffffff',
+              fontSize: '1.22rem',
+              fontWeight: 900,
+              cursor: lowerDisabled ? 'not-allowed' : 'pointer',
+              opacity: lowerDisabled ? 0.92 : 1,
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <span>
+              <i className="fas fa-arrow-down"></i> TURUNKAN JARING
+            </span>
+            <small style={{ fontSize: '0.88rem', fontWeight: 600, color: lowerDisabled ? 'var(--text-secondary)' : '#e0f2fe' }}>
+              {lowerDisabled ? lowerReason : 'Tekan setelah ikan selesai diserok'}
+            </small>
+          </button>
+        </div>
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Dialog konfirmasi turun ===== */}
+      {confirmLowerOpen && (
+        <div className="baganova-modal-backdrop" onClick={() => setConfirmLowerOpen(false)}>
+          <div
+            className="baganova-modal-box"
+            style={{ maxWidth: '460px', textAlign: 'center', padding: '24px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <i
+              className="fas fa-shield-alt"
+              style={{ fontSize: '2.5rem', color: 'var(--primary)', marginBottom: '12px' }}
+            ></i>
+            <h3 style={{ color: 'var(--text-primary)', marginBottom: '10px', fontSize: '1.3rem' }}>
+              Turunkan jaring ke laut?
+            </h3>
+            <p
+              style={{
+                fontSize: '1.05rem',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.6,
+                marginBottom: '20px'
+              }}
+            >
+              Pastikan:
+              <br />✔ Semua ikan sudah diserok
+              <br />✔ Tidak ada perahu di bawah bagan
+              <br />✔ Tali tidak kusut
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirmLowerOpen(false)}
+                style={{ flex: 1, minHeight: '52px', fontSize: '1.05rem' }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleConfirmLower}
+                style={{ flex: 1, minHeight: '52px', fontSize: '1.05rem' }}
+              >
+                <i className="fas fa-check"></i> Ya, turunkan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Riwayat ===== */}
+      <ScrollSlide delay={0.05} y={26}>
+      <div style={card}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '12px',
+            gap: '8px',
+            flexWrap: 'wrap'
+          }}
+        >
+          <h3 style={{ fontSize: '1.15rem', margin: 0, color: 'var(--text-primary)' }}>
+            <i className="fas fa-history" style={{ color: 'var(--primary)', marginRight: '6px' }}></i>
+            Riwayat naik jaring
+          </h3>
+          {history.length > 3 && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowAllHistory(!showAllHistory)}
+              style={{ padding: '8px 12px', fontSize: '0.9rem', minHeight: '40px' }}
+            >
+              {showAllHistory ? 'Tampilkan sedikit' : 'Lihat lebih banyak'}
+            </button>
+          )}
+        </div>
+
+        {history.length === 0 ? (
+          <p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '1rem', fontSize: '1rem' }}>
+            Belum ada catatan.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {visibleHistory.map((item, idx) => {
+              const ok = item.status.startsWith('Sukses');
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--card-border)',
+                    borderRadius: '12px',
+                    padding: '12px 14px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>
+                      {item.time} · {item.date}
+                    </strong>
+                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                      {item.mode === 'Otomatis ESP32' ? 'Otomatis' : item.mode === 'Manual Nelayan' ? 'Manual' : 'Uji coba'}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontFamily: FONT_MONO, fontSize: '1.15rem', fontWeight: 800, color: 'var(--primary)' }}>
+                      {item.triggerLoad} kg
+                    </div>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        marginTop: '3px',
+                        fontSize: '0.85rem',
+                        fontWeight: 700,
+                        color: ok ? 'var(--status-ok-text)' : 'var(--status-danger-text)',
+                        background: ok ? 'var(--status-ok-bg)' : 'var(--status-danger-bg)',
+                        border: `1px solid ${ok ? 'var(--status-ok-border)' : 'var(--status-danger-border)'}`,
+                        padding: '2px 8px',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      {ok ? 'Berhasil' : item.status === 'E-STOP' ? 'Darurat' : 'Dihentikan'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Mode uji coba (disembunyikan dari operasional harian) ===== */}
+      <ScrollSlide delay={0.05} y={24}>
+      <div style={{ ...card, borderStyle: 'dashed' }}>
+        <button
+          type="button"
+          onClick={() => setTestModeOpen(!testModeOpen)}
+          style={{
+            width: '100%',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-secondary)',
+            fontSize: '0.95rem',
+            fontWeight: 700,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            cursor: 'pointer',
+            minHeight: '40px'
+          }}
+        >
+          <span>
+            <i className="fas fa-flask"></i> Mode uji coba (bukan untuk melaut)
+          </span>
+          <i className={`fas ${testModeOpen ? 'fa-chevron-up' : 'fa-chevron-down'}`}></i>
+        </button>
+
+        {testModeOpen && (
+          <div style={{ marginTop: '12px' }}>
+            <div
+              style={{
+                fontSize: '0.92rem',
+                color: 'var(--status-warn-text)',
+                background: 'var(--status-warn-bg)',
+                border: '1px solid var(--status-warn-border)',
+                borderRadius: '12px',
+                padding: '10px 12px',
+                marginBottom: '12px',
+                fontWeight: 600
+              }}
+            >
+              <i className="fas fa-exclamation-triangle"></i> Tombol ini hanya mensimulasikan ikan. Motor bisa menyala
+              sendiri. Jangan dipakai saat ada orang di dekat jaring.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => addFishWeight(15.0)}
+                disabled={isMoving || isEStop}
+                style={{ minHeight: '56px', fontSize: '0.95rem' }}
+              >
+                <i className="fas fa-fish"></i> Tambah 15 kg (simulasi)
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={triggerTargetLoad}
+                disabled={isMoving || isAtTop || isEStop}
+                style={{ minHeight: '56px', fontSize: '0.95rem' }}
+              >
+                <i className="fas fa-bolt"></i> Langsung {targetKg} kg (simulasi)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      </ScrollSlide>
+
+      {/* ===== Tombol darurat: selalu menempel di bawah layar ===== */}
+      <div
+        style={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 10000,
+          padding: '10px 12px calc(10px + env(safe-area-inset-bottom, 0px)) 12px',
+          background: 'rgba(7, 22, 44, 0.96)',
+          backdropFilter: 'blur(8px)',
+          borderTop: '1px solid rgba(255,255,255,0.16)',
+          boxShadow: '0 -8px 28px rgba(2, 12, 27, 0.25)'
+        }}
+      >
+        <div style={{ maxWidth: '820px', margin: '0 auto' }}>
+          {isEStop ? (
+            <button
+              type="button"
+              onClick={resetEStop}
+              style={{
+                width: '100%',
+                minHeight: '68px',
+                borderRadius: '16px',
+                border: '2px solid #34d399',
+                background: '#10b981',
+                color: '#06281d',
+                fontSize: '1.2rem',
+                fontWeight: 900,
+                cursor: 'pointer'
+              }}
+            >
+              <i className="fas fa-undo"></i> LEPAS TOMBOL DARURAT
+              <small style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700 }}>
+                Pastikan aman, lalu tekan untuk siap lagi
+              </small>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={triggerEStop}
+              style={{
+                width: '100%',
+                minHeight: '68px',
+                borderRadius: '16px',
+                border: '3px solid #fecaca',
+                background: '#dc2626',
+                color: '#ffffff',
+                fontSize: '1.3rem',
+                fontWeight: 900,
+                cursor: 'pointer',
+                boxShadow: '0 0 0 3px rgba(220,38,38,0.35)'
+              }}
+            >
+              <i className="fas fa-hand"></i> STOP DARURAT
+              <small style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, color: '#fee2e2' }}>
+                Tekan untuk mematikan mesin seketika
+              </small>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

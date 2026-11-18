@@ -1,0 +1,8 @@
+{
+  "name": "BAGANOVA - Smart Automated Bagan System",
+  "description": "Pusat Pemantauan dan Pengendalian Alat Bagan Tancap Otomatis Berbasis ESP32, Load Cell HX711, Motor DC Gearbox 12V, dan Firebase Realtime Database.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

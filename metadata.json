@@ -1,0 +1,10 @@
+{
+  "name": "BAGANOVA — Smart Automated Bagan System",
+  "description": "Platform Multi-Bagan Otomatisasi Pengangkatan Jaring Berbasis Sensor Beban Aksial Tali Utama, Mikrokontroler ESP32, Motor Gearbox 12V, dan Proteksi Sakelar Batas Atas.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
